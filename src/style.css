@@ -221,12 +221,12 @@ button.play {
   font-size: 1.7rem;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: #08351b;
-  background: linear-gradient(#a4f78b, #36b957);
-  border: 2px solid #c6ffb6;
+  color: #24103f;
+  background: linear-gradient(#ffe993, #e5ad35);
+  border: 2px solid #fff2b6;
   border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 0 22px rgba(73, 221, 104, 0.72);
+  box-shadow: 0 0 22px rgba(255, 201, 80, 0.72);
 }
 
 button.play:hover {
