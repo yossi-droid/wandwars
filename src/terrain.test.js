@@ -379,6 +379,38 @@ describe('magical digging mode', () => {
     wizard.drillFeetY = 750;
     return { state, wizard };
   }
+  it('starts held digging immediately, rate limits terrain edits, and stops on release', () => {
+    const { state, wizard } = setup();
+    state.terrain = createTerrain(() => 600);
+    wizard.drillFeetY = 430;
+    const mana = JSON.stringify(wizard.manaPouch);
+    const inventory = JSON.stringify(wizard.inventorySlots);
+    const input = {
+      digMode: true,
+      dig: true,
+      digDirection: 'forward',
+      digAimX: 200,
+      digAimZ: 0,
+      digAimY: 560,
+      digAimHit: 'terrain',
+    };
+    update(state, [input], 0.05);
+    expect(state.terrain.operations).toHaveLength(1);
+    const nextTime = wizard.nextPrecisionDigTime;
+    update(state, [{ ...input, digAimX: 450 }], 0.05);
+    expect(state.terrain.operations).toHaveLength(1);
+    expect(wizard.digging).toBe(true);
+    while (state.time <= nextTime + 0.05) update(state, [{ ...input, digAimX: 450 }], 0.05);
+    expect(state.terrain.operations.length).toBeGreaterThan(1);
+    update(state, [{ ...input, dig: false }], 0.05);
+    expect(wizard.digging).toBe(false);
+    expect(wizard.nextPrecisionDigTime).toBe(0);
+    const stopped = state.terrain.operations.length;
+    update(state, [{ ...input, digMode: false }], 0.05);
+    expect(state.terrain.operations).toHaveLength(stopped);
+    expect(JSON.stringify(wizard.manaPouch)).toBe(mana);
+    expect(JSON.stringify(wizard.inventorySlots)).toBe(inventory);
+  });
   it('toggles off, cancels charges on release, run-off, and heavy damage', () => {
     const { state, wizard } = setup();
     press(state, wizard, {}, 8);

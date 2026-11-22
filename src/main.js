@@ -24,7 +24,10 @@ import {
   terrainHeight,
   terrainMaterialAt,
   MAGICAL_DRILL,
+  NATURAL_WATER,
+  MAP_FEATURES,
 } from './game.js';
+import { STYLE_SAMPLE } from './fantasyStyle.js';
 import { itemName } from './items.js';
 import { createRenderer, HUD_W, HUD_H } from './render3d.js';
 import { ADS_SETTINGS, adsProfileForWeapon, advanceAdsAmount } from './ads.js';
@@ -158,7 +161,7 @@ let mouseBindings = {
 let bindingCapture = null;
 let mouseSensitivity = Number(readSetting('wandwars-mouse-sensitivity', '100')) / 100;
 let invertY = readSetting('wandwars-invert-y', 'false') === 'true';
-let digControl = readSetting('wandwars-dig-control', 'toggle') === 'hold' ? 'hold' : 'toggle';
+let digControl = readSetting('wandwars-dig-control', 'hold') === 'hold' ? 'hold' : 'toggle';
 const requestedGraphics = new URLSearchParams(window.location.search).get('graphics');
 const itemDebug = new URLSearchParams(window.location.search).get('itemsDebug') === '1';
 const terrainDebug = new URLSearchParams(window.location.search).get('terrainDebug') === '1';
@@ -295,9 +298,6 @@ let diggingMode = false; // customizable Dig binding, held or toggled
 let diggingAction = false;
 let primaryHeld = false;
 let rightDigHeld = false;
-let digShotQueued = false;
-let digShotDirection = 'forward';
-let digActionTimer = 0;
 let drillHeld = false;
 let digSpellQueued = false;
 let selectedAttackSlot = -1; // selected occupied slot; -1 while the player is unarmed
@@ -446,6 +446,7 @@ function onKeyDown(e) {
   }
   if (matchesBinding('drill', e)) {
     if (diggingMode) drillHeld = true;
+    syncMouseActions();
     e.preventDefault();
     return;
   }
@@ -487,7 +488,10 @@ function onKeyUp(e) {
     pickupPressedAt = 0;
   }
   if (matchesBinding('holdToSwap', e)) held.delete('swap');
-  if (matchesBinding('drill', e)) drillHeld = false;
+  if (matchesBinding('drill', e)) {
+    drillHeld = false;
+    syncMouseActions();
+  }
   // Some browsers reserve Escape's keydown solely for leaving pointer lock but
   // still deliver its keyup. Handle that half of the same physical press so a
   // second Escape is never required.
@@ -597,30 +601,18 @@ function onPointerLockChange() {
   if (wasLocked && !locked && !gameScreen.hidden) showMenu();
 }
 function syncMouseActions() {
+  diggingAction = diggingMode && (primaryHeld || rightDigHeld) && !drillHeld;
   casting = primaryHeld && !diggingMode;
   renderer?.setDiggingMode?.(diggingMode);
   renderer?.setDiggingAction?.(diggingAction);
   gameScreen.dataset.diggingAction = String(diggingAction);
-}
-function queueDigShot(direction) {
-  digShotQueued = true;
-  digShotDirection = direction;
-  diggingAction = true;
-  renderer?.flashDigBeam?.();
-  clearTimeout(digActionTimer);
-  digActionTimer = window.setTimeout(() => {
-    diggingAction = false;
-    syncMouseActions();
-  }, 450);
 }
 function setDiggingMode(active) {
   if (diggingMode === active) return;
   diggingMode = active;
   if (!active) {
     rightDigHeld = false;
-    digShotQueued = false;
     diggingAction = false;
-    clearTimeout(digActionTimer);
     drillHeld = false;
     updateDrillAudio(null);
   } else {
@@ -634,11 +626,9 @@ function onMouseDown(e) {
   onMouseMove(e);
   requestLock(); // clicking captures the mouse for free 360° look
   if (e.button === 2) {
-    if (diggingMode && !rightDigHeld) queueDigShot('down');
     rightDigHeld = diggingMode;
     ads = !diggingMode;
   } else if (diggingMode && e.button === 0) {
-    if (!primaryHeld) queueDigShot(held.has('crouch') ? 'down' : 'forward');
     primaryHeld = true;
   } else if (e.button === mouseBindings.cast) primaryHeld = true;
   syncMouseActions();
@@ -655,9 +645,7 @@ function onWindowBlur() {
   // A browser can miss mouseup when focus changes while a tool is held.
   primaryHeld = false;
   rightDigHeld = false;
-  digShotQueued = false;
   diggingAction = false;
-  clearTimeout(digActionTimer);
   ads = false;
   setDiggingMode(false);
   syncMouseActions();
@@ -720,12 +708,8 @@ function readInput() {
     aimTargetId: digTarget.targetId,
     attack,
     cast: casting && !diggingMode,
-    dig: digShotQueued && diggingMode && !drillHeld,
-    digDirection: digShotQueued
-      ? digShotDirection
-      : rightDigHeld || (diggingMode && primaryHeld && held.has('crouch'))
-        ? 'down'
-        : 'forward',
+    dig: diggingMode && (primaryHeld || rightDigHeld) && !drillHeld,
+    digDirection: rightDigHeld ? 'down' : 'forward',
     digAimPitch: pitch,
     digAimX: t.x,
     digAimZ: t.y,
@@ -1240,8 +1224,8 @@ function drawDiggingMode() {
   hud.font = '11px system-ui, sans-serif';
   hud.fillText(
     held.has('run')
-      ? `${activeDigHint()} · Click to fire laser · Right-click down · hold ${bindingLabel(keyBindings.drill)} to drill`
-      : `${activeDigHint()} · Click to fire laser · Right-click down · ${bindingLabel(keyBindings.digSpell)} support`,
+      ? `${activeDigHint()} · hold ${bindingLabel(keyBindings.drill)} to drill`
+      : `${activeDigHint()} · ${bindingLabel(keyBindings.digSpell)} support`,
     HUD_W / 2,
     y + 39,
   );
@@ -1641,7 +1625,7 @@ function drawHud() {
   hud.fillStyle = 'rgba(148,163,184,0.7)';
   hud.fillText(
     diggingMode
-      ? `WASD move · ${activeDigHint()} · Click to fire laser · Right-click down · ${bindingLabel(keyBindings.drill)} drill · E inventory · M map`
+      ? `WASD move · ${activeDigHint()} · ${bindingLabel(keyBindings.drill)} drill · E inventory · M map`
       : locked
         ? `WASD move · Click cast · Right-click zoom · ${digControlHint()} · E inventory · M map`
         : `Click to look · WASD move · Right-click zoom · ${digControlHint()} · E inventory · M map`,
@@ -1762,6 +1746,47 @@ function updateDrillAudio(wizard) {
     // Audio is optional; no browser audio failure may stop a terrain edit.
   }
 }
+let splashAudioBuffer = null;
+function playSplashSound() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    pickupAudioContext ||= new AudioContextClass();
+    pickupAudioContext.resume();
+    const context = pickupAudioContext;
+    if (!splashAudioBuffer) {
+      splashAudioBuffer = context.createBuffer(
+        1,
+        Math.floor(context.sampleRate * 0.24),
+        context.sampleRate,
+      );
+      const data = splashAudioBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++)
+        data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 2;
+    }
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    source.buffer = splashAudioBuffer;
+    filter.type = 'lowpass';
+    filter.frequency.value = 850;
+    gain.gain.value =
+      (((Number(readSetting('wandwars-effects-volume', '100')) / 100) *
+        Number(readSetting('wandwars-master-volume', '100'))) /
+        100) *
+      0.24;
+    source.connect(filter).connect(gain).connect(context.destination);
+    source.onended = () => {
+      source.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+    source.start();
+  } catch {
+    // Muted audio must never interrupt swimming.
+  }
+}
+
 function playPickupSound() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return;
@@ -1827,6 +1852,22 @@ function playDigSound(blocked = false, magicalPunch = false) {
 
 function processMatchEvents() {
   for (const event of state.events || []) {
+    renderer.queueMatchEvent?.(event);
+    if (event.type === 'water-splash') {
+      if (Math.hypot(player().x - event.x, player().y - event.y) < 1200) playSplashSound();
+      continue;
+    }
+    if (
+      [
+        'attack-pickup',
+        'weapon-upgrade',
+        'inventory-pickup',
+        'inventory-swap',
+        'mana-pickup',
+      ].includes(event.type)
+    ) {
+      renderer.animatePickup?.(event, state);
+    }
     if (event.type === 'terrain-collapse') {
       if (event.first && Math.hypot(player().x - event.x, player().y - event.y) < 1200) {
         playDigSound(false);
@@ -1994,7 +2035,6 @@ function advanceSimulation(elapsed, openingCatchup = false) {
     dropOneQueued = false;
     dropStackQueued = false;
     inventorySelectQueued = null;
-    digShotQueued = false;
     digSpellQueued = false;
   }
   // Running out cancels the sprint toggle. The player keeps normal walking
@@ -2140,13 +2180,37 @@ function startMatch(retryCount = 0) {
         });
         if (terrainDebug) {
           window.__terrainDebug = {
+            showStyleOverview: (enabled = true) => renderer?.setSampleOverview?.(enabled),
+            teleportToWater: (kind = 'pond', shallow = false) => {
+              const sample =
+                kind === 'river'
+                  ? NATURAL_WATER.riverSamples[82]
+                  : {
+                      x: MAP_FEATURES.pond.x,
+                      z: MAP_FEATURES.pond.y,
+                    };
+              const x = sample.x + (shallow ? (sample.width || MAP_FEATURES.pond.r) * 0.92 : 0);
+              const y = sample.z;
+              const wizard = player();
+              wizard.x = x;
+              wizard.y = y;
+              wizard.drillFeetY = null;
+              wizard.jumpH = wizard.jumpV = wizard.flyH = wizard.climbH = 0;
+              wizard.climbState = null;
+              wizard.lastTerrainFeetY = terrainHeight(x, y);
+              yaw = Math.PI / 2;
+              return { x, y, level: NATURAL_WATER.surfaceAt(x, y)?.level };
+            },
             snapshot: () => ({
+              time: state.time,
+              nearestItem: nearestInteractableItem(state, player()),
               revision: state.terrain.revision,
               operations: state.terrain.operations.length,
               lastOperations: state.terrain.operations.slice(-5).map((operation) => ({
                 shape: operation.shape,
                 dirX: operation.dirX,
                 dirY: operation.dirY,
+                dirZ: operation.dirZ,
                 x: operation.x,
                 z: operation.z,
                 y: operation.y,
@@ -2186,6 +2250,12 @@ function startMatch(retryCount = 0) {
                 feetY: player().drillFeetY ?? terrainHeight(player().x, player().y),
                 surfaceY: terrainHeight(player().x, player().y),
                 health: player().health,
+                swimming: player().swimming,
+                inWater: player().inWater,
+                waterLevel: player().waterLevel,
+                waterVelocity: player().waterVelocity,
+                knockbackX: player().knockbackX,
+                knockbackY: player().knockbackY,
                 mana: { ...player().manaPouch },
                 baseWeaponId: player().baseWeaponId,
                 inventory: player().inventorySlots.map((item) => item?.itemId || null),
@@ -2236,6 +2306,43 @@ function startMatch(retryCount = 0) {
             grantElementalMana: (amount = 100) => {
               player().manaPouch.elemental += Math.max(0, amount);
               return player().manaPouch.elemental;
+            },
+            spawnTrailProjectile: () => {
+              const me = player();
+              state.spells.push({
+                x: me.x,
+                y: me.y,
+                z: 220,
+                originGround: terrainHeight(me.x, me.y),
+                vx: 300,
+                vy: 0,
+                vz: 0,
+                life: 1.5,
+                radius: 8,
+                damage: 0,
+                ownerId: me.id,
+                color: '#b28aff',
+              });
+            },
+            spawnImpactProjectile: (hitPlayer = false) => {
+              const me = player();
+              const x = me.x + (hitPlayer ? -40 : 180);
+              state.spells.push({
+                x,
+                y: me.y,
+                z: hitPlayer ? 90 : 4,
+                originGround: terrainHeight(x, me.y),
+                vx: hitPlayer ? 900 : 0,
+                vy: 0,
+                vz: hitPlayer ? 0 : -200,
+                life: 1,
+                radius: 20,
+                damage: 28,
+                explosionRadius: 240,
+                splashDamage: 24,
+                ownerId: hitPlayer ? -1 : me.id,
+                color: '#f97316',
+              });
             },
             markVolume: (volume) => state.terrain.markVolume(volume),
             unmarkVolume: (id) => state.terrain.unmarkVolume(id),
@@ -2353,8 +2460,6 @@ function startMatch(retryCount = 0) {
         diggingAction = false;
         primaryHeld = false;
         rightDigHeld = false;
-        digShotQueued = false;
-        clearTimeout(digActionTimer);
         ads = false;
         adsAmount = 0;
         fov = adsProfileForWeapon(confirmedBaseWeapon).hipFov;
@@ -2362,6 +2467,12 @@ function startMatch(retryCount = 0) {
         digSpellQueued = false;
         yaw = state.wizards[0].heading; // start facing the way we spawned
         pitch = -0.26; // reference-style downward view with the full wizard in frame
+        if (new URLSearchParams(location.search).has('stylePreview')) {
+          state.wizards[0].x = STYLE_SAMPLE.spawn.x;
+          state.wizards[0].y = STYLE_SAMPLE.spawn.z;
+          yaw = STYLE_SAMPLE.yaw;
+          pitch = -0.16;
+        }
         selectedAttackSlot = -1;
         flying = false;
         mapOpen = false;
@@ -2515,8 +2626,6 @@ function stopGame(releaseRenderer = false) {
   casting = false;
   primaryHeld = false;
   rightDigHeld = false;
-  digShotQueued = false;
-  clearTimeout(digActionTimer);
   ads = false;
   adsAmount = 0;
   fov = ADS_SETTINGS.hipFov;
@@ -2648,8 +2757,8 @@ function digControlHint() {
 function activeDigHint() {
   const key = bindingLabel(keyBindings.dig);
   return digControl === 'toggle'
-    ? `Press ${key} to exit Dig mode`
-    : `Release ${key} to exit Dig mode`;
+    ? `Press ${key} to exit · Hold left-click forward / right-click down`
+    : `Hold left-click forward / right-click down · Release ${key} to exit`;
 }
 
 function saveKeyBindings() {

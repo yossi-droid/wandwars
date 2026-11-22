@@ -8,6 +8,7 @@ import {
 import { createTerrain } from './terrain.js';
 import { createTerrainSupport } from './terrainSupport.js';
 import { createTerrainFluids } from './terrainFluids.js';
+import { createWaterways, waterContact, setWaterContact, stepBuoyancy } from './waterPhysics.js';
 
 // Pure, testable logic for a magic battle royale. NO browser code here (no
 // `document`, `canvas`, or `window`) — just the rules, so they are easy to
@@ -1417,7 +1418,7 @@ function terrainSmooth(v, a, b) {
 }
 const HEIGHT_MTN = REGIONS.find((r) => r.biome === 'mountain');
 const HEIGHT_DES = REGIONS.find((r) => r.biome === 'desert');
-export function originalTerrainHeight(x, y) {
+function landformHeight(x, y) {
   const r = Math.hypot(x, y);
   const A = ARENA.radius;
   // Several broad, rotated wave fields approximate low-frequency terrain noise.
@@ -1469,9 +1470,33 @@ export function originalTerrainHeight(x, y) {
   return h;
 }
 
+export const NATURAL_WATER = createWaterways({
+  riverPath: RIVER_PATH,
+  pond: MAP_FEATURES.pond,
+  baseHeight: landformHeight,
+});
+
+export function originalTerrainHeight(x, y) {
+  return landformHeight(x, y) - NATURAL_WATER.bedLowering(x, y);
+}
+
+export function wizardWaterContact(state, wizard) {
+  return waterContact(state, wizard, NATURAL_WATER.surfaceAt, terrainHeight, originalTerrainHeight);
+}
+
 let activeTerrain = null;
 export function terrainHeight(x, y) {
   return activeTerrain ? activeTerrain.surfaceHeight(x, y) : originalTerrainHeight(x, y);
+}
+
+function wizardElevation(wizard) {
+  return (
+    (wizard.drillFeetY == null ? 0 : wizard.drillFeetY - terrainHeight(wizard.x, wizard.y)) +
+    (wizard.climbH || 0) +
+    (wizard.flyH || 0) +
+    (wizard.jumpH || 0) +
+    (wizard.openingH || 0)
+  );
 }
 
 export function setActiveTerrain(terrain) {
@@ -1624,6 +1649,7 @@ export function precisionDig(state, wizard, direction) {
       y: z,
       worldZ: y,
       color: material.dust,
+      radius: brush.radius,
     });
   return result;
 }
@@ -1801,7 +1827,7 @@ export function updateMagicalDigging(state, wizard, input, dt) {
     wizard.drillFeetY = wizard.lastTerrainFeetY;
     wizard.drillFallV = 0;
   }
-  if (wizard.drillFeetY != null && !wizard.drill) {
+  if (wizard.drillFeetY != null && !wizard.drill && !wizard.swimming) {
     if (wizard.climbState === 'terrain-wall') return;
     const floor = state.terrain.supportHeight(wizard.x, wizard.y, wizard.drillFeetY + 8);
     if (wizard.drillFeetY > floor + 1) {
@@ -1944,6 +1970,7 @@ export function digTerrain(state, wizard, targetX, targetY, targetHeight) {
       y: targetY,
       worldZ: targetHeight,
       color: material.dust,
+      radius: SHOVEL.radius * material.digScale,
     });
   }
   return result;
@@ -2033,6 +2060,7 @@ export function castDiggingSpell(state, wizard, itemId, targetX, targetY, target
       y: centerY,
       worldZ: targetHeight,
       color: spell.color,
+      radius: spell.radius,
     });
   }
   return result;
@@ -2742,6 +2770,7 @@ export function collectAttackPickup(state, wizard, pickup) {
     pickup.collectedBy = wizard.id;
     state.events.push({
       type: 'mana-pickup',
+      groundId: pickup.id,
       wizardId: wizard.id,
       ammoType: pickup.ammoType,
       amount: gained,
@@ -2757,6 +2786,7 @@ export function collectAttackPickup(state, wizard, pickup) {
     pickup.collectedBy = wizard.id;
     state.events.push({
       type: 'weapon-upgrade',
+      groundId: pickup.id,
       wizardId: wizard.id,
       runeRarity: pickup.rarity,
       previousRarity,
@@ -2786,6 +2816,7 @@ export function collectAttackPickup(state, wizard, pickup) {
       );
       state.events.push({
         type: 'attack-pickup',
+        groundId: pickup.id,
         wizardId: wizard.id,
         attackId: ownedTier,
         originalAttackId: pickup.attackId,
@@ -2807,6 +2838,7 @@ export function collectAttackPickup(state, wizard, pickup) {
     if (!equipped) equipped = equipAttack(wizard, resolvedAttackId, ATTACK_SLOT_COUNT - 1);
     state.events.push({
       type: 'attack-pickup',
+      groundId: pickup.id,
       wizardId: wizard.id,
       attackId: resolvedAttackId,
       originalAttackId: pickup.attackId,
@@ -2829,6 +2861,7 @@ export function collectAttackPickup(state, wizard, pickup) {
     pickup.collectedBy = wizard.id;
     state.events.push({
       type: 'attack-pickup',
+      groundId: pickup.id,
       wizardId: wizard.id,
       attackId: pickup.attackId,
       compatible: true,
@@ -2843,6 +2876,7 @@ export function collectAttackPickup(state, wizard, pickup) {
   const equipped = equipAttack(wizard, pickup.attackId);
   state.events.push({
     type: 'attack-pickup',
+    groundId: pickup.id,
     wizardId: wizard.id,
     attackId: pickup.attackId,
     compatible: true,
@@ -3112,6 +3146,7 @@ export function collectGroundItem(state, wizard, groundId, action = 'pickup') {
     state.inventoryRevision++;
     state.events.push({
       type: 'mana-pickup',
+      groundId: pickup.id,
       wizardId: wizard.id,
       ammoType: pickup.ammoType,
       amount: gained,
@@ -3133,6 +3168,7 @@ export function collectGroundItem(state, wizard, groundId, action = 'pickup') {
     state.inventoryRevision++;
     state.events.push({
       type: 'weapon-upgrade',
+      groundId: pickup.id,
       wizardId: wizard.id,
       previousRarity: current,
       rarity: wizard.baseWeaponRarity,
@@ -3163,6 +3199,7 @@ export function collectGroundItem(state, wizard, groundId, action = 'pickup') {
     state.inventoryRevision++;
     state.events.push({
       type: 'inventory-swap',
+      groundId: pickup.id,
       wizardId: wizard.id,
       item,
       droppedItem: old,
@@ -3182,6 +3219,7 @@ export function collectGroundItem(state, wizard, groundId, action = 'pickup') {
   state.inventoryRevision++;
   state.events.push({
     type: 'inventory-pickup',
+    groundId: pickup.id,
     wizardId: wizard.id,
     item: { ...item, quantity: amount },
     equipped,
@@ -3341,6 +3379,13 @@ export function createState({
       staminaExhausted: false,
       jumpH: 0, // temporary height above the current ground/platform
       jumpV: 0, // vertical jump velocity
+      knockbackX: 0,
+      knockbackY: 0,
+      inWater: false,
+      swimming: false,
+      waterVelocity: 0,
+      waterMoveScale: 1,
+      waterLevel: null,
       digMode: false,
       drillCharge: 0,
       drill: null,
@@ -3432,13 +3477,12 @@ export function createState({
   }
   state.terrainFluids = createTerrainFluids(state.terrain, {
     naturalWaterAt: (x, z) => {
-      const nearRiver = riverDistance(x, z).distance < 90;
-      const nearPond = dist(x, z, MAP_FEATURES.pond.x, MAP_FEATURES.pond.y) < MAP_FEATURES.pond.r;
-      if (!nearRiver && !nearPond) return null;
+      const water = NATURAL_WATER.surfaceAt(x, z);
+      if (!water) return null;
       const surface = originalTerrainHeight(x, z);
       // An intact riverbed must not leak into a tunnel beneath it.
       if (state.terrain.density(x, z, surface - 8) >= 0) return null;
-      return { kind: 'water', level: surface + 10 };
+      return { kind: 'water', level: water.level };
     },
   });
   const lavaX = HEIGHT_DES.x - 1000;
@@ -3627,6 +3671,7 @@ export function moveWizard(wizard, dx, dy, dt, obstacles) {
   if (dir.x === 0 && dir.y === 0) return;
   const speed =
     (wizard.running ? WIZARD.runSpeed : WIZARD.speed) *
+    (wizard.waterMoveScale ?? 1) *
     (wizard.slowFactor || 1) *
     (wizard.hasteFactor || 1);
   let x = wizard.x + dir.x * speed * dt;
@@ -4054,7 +4099,7 @@ export function attackCooldownRemaining(wizard, attackId) {
 
 function attackOrigin(wizard) {
   const angle = wizard.heading;
-  const bodyBase = (wizard.climbH || 0) + (wizard.flyH || 0) + (wizard.jumpH || 0);
+  const bodyBase = wizardElevation(wizard);
   return {
     x: wizard.x + Math.cos(angle) * (WIZARD.radius + 8),
     y: wizard.y + Math.sin(angle) * (WIZARD.radius + 8),
@@ -4181,6 +4226,79 @@ function moveTargetByForce(state, target, sourceX, sourceY, amount) {
   [target.x, target.y] = resolveObstacles(x, y, WIZARD.radius, state.obstacles);
 }
 
+function addHitKnockback(target, sourceX, sourceY, strength) {
+  let away = normalize(target.x - sourceX, target.y - sourceY);
+  if (!away.x && !away.y)
+    away = { x: Math.cos(target.heading || 0), y: Math.sin(target.heading || 0) };
+  let vx = (target.knockbackX || 0) + away.x * strength;
+  let vy = (target.knockbackY || 0) + away.y * strength;
+  const speed = Math.hypot(vx, vy);
+  if (speed > 650) {
+    vx *= 650 / speed;
+    vy *= 650 / speed;
+  }
+  target.knockbackX = vx;
+  target.knockbackY = vy;
+  if (target.climbState === 'wall' || target.climbState === 'terrain-wall') {
+    target.climbState = null;
+    target.climbOver = null;
+    target.runningJump = false;
+  }
+}
+
+// Advance a short physical slide rather than teleporting the victim. Small
+// collision steps prevent strong hits from passing through thin walls.
+export function stepHitKnockback(state, wizard, dt) {
+  let vx = wizard.knockbackX || 0;
+  let vy = wizard.knockbackY || 0;
+  if (!wizard.alive || Math.hypot(vx, vy) < 2) {
+    wizard.knockbackX = wizard.knockbackY = 0;
+    return;
+  }
+  const decay = Math.exp(-8 * dt);
+  if (!wizard.drill) {
+    const travel = (1 - decay) / 8;
+    const steps = Math.max(1, Math.ceil((Math.hypot(vx, vy) * travel) / 8));
+    const feet = wizard.drillFeetY ?? terrainHeight(wizard.x, wizard.y);
+    const elevation = (wizard.jumpH || 0) + (wizard.climbH || 0) + (wizard.flyH || 0);
+    const bodyFeet = feet + elevation;
+    const collisionObstacles =
+      elevation > 0
+        ? (state.obstacles || []).filter(
+            (obstacle) =>
+              obstacleGroundHeight(obstacle) + (obstacle.top || climbTopOf(obstacle)) >
+              bodyFeet + 4,
+          )
+        : state.obstacles;
+    const inExcavation =
+      wizard.drillFeetY != null ||
+      originalTerrainHeight(wizard.x, wizard.y) - terrainHeight(wizard.x, wizard.y) > 24;
+    for (let step = 0; step < steps; step++) {
+      const candidateX = wizard.x + (vx * travel) / steps;
+      const candidateY = wizard.y + (vy * travel) / steps;
+      const boundary = Math.hypot(candidateX, candidateY);
+      const limit = ARENA.radius - WIZARD.radius;
+      let x = boundary > limit ? (candidateX / boundary) * limit : candidateX;
+      let y = boundary > limit ? (candidateY / boundary) * limit : candidateY;
+      [x, y] = resolveObstacles(x, y, WIZARD.radius, collisionObstacles);
+      if (
+        state.terrain &&
+        inExcavation &&
+        [30, 84, 150].some((height) => state.terrain.density(x, y, bodyFeet + height) >= 0)
+      ) {
+        vx = vy = 0;
+        break;
+      }
+      if (Math.abs(x - candidateX) > 0.001) vx = 0;
+      if (Math.abs(y - candidateY) > 0.001) vy = 0;
+      wizard.x = x;
+      wizard.y = y;
+    }
+  }
+  wizard.knockbackX = vx * decay;
+  wizard.knockbackY = vy * decay;
+}
+
 function damageWithAttack(state, target, amount, attack, sourceX, sourceY) {
   if (!target?.alive || amount <= 0) return 0;
   if (target.regenStopsOnDamage) {
@@ -4199,7 +4317,9 @@ function damageWithAttack(state, target, amount, attack, sourceX, sourceY) {
   }
   target.health -= damage;
   applyAttackStatus(target, attack);
-  if (attack.knockback) moveTargetByForce(state, target, sourceX, sourceY, attack.knockback);
+  if (!attack.pull && attack.kind !== 'zone' && amount >= 1) {
+    addHitKnockback(target, sourceX, sourceY, attack.knockback || clamp(amount * 6, 35, 360));
+  }
   if (attack.pull) moveTargetByForce(state, target, sourceX, sourceY, -attack.pull);
   return damage;
 }
@@ -4251,6 +4371,7 @@ function castBeamAttack(state, wizard, attack) {
       worldZ: terrainHeight(target.x, target.y) + BODY_HEIGHT * 0.55,
       color: attack.color,
       victim: target.id,
+      impactPower: attack.damage,
     });
   }
   state.events.push({
@@ -4298,6 +4419,7 @@ function castAttackMelee(state, wizard, attack) {
       y: target.y,
       victim: target.id,
       color: attack.color,
+      impactPower: attack.damage,
     });
   }
   state.events.push({
@@ -4307,6 +4429,7 @@ function castAttackMelee(state, wizard, attack) {
     dir: wizard.heading,
     color: attack.color,
     range: attack.range,
+    impactPower: attack.damage,
   });
 }
 
@@ -4326,6 +4449,7 @@ function castNovaAttack(state, wizard, attack) {
     x: wizard.x,
     y: wizard.y,
     range: attack.range,
+    impactPower: attack.damage,
     color: attack.color,
   });
 }
@@ -4533,7 +4657,7 @@ function castBolt(state, wizard) {
   const a = wizard.heading;
   const mx = wizard.x + Math.cos(a) * (WIZARD.radius + 8);
   const my = wizard.y + Math.sin(a) * (WIZARD.radius + 8);
-  const bodyBase = (wizard.climbH || 0) + (wizard.flyH || 0) + (wizard.jumpH || 0);
+  const bodyBase = wizardElevation(wizard);
   const mz = bodyBase + WAND.castHeight;
   const originGround = terrainHeight(wizard.x, wizard.y);
   const tx = wizard.aimX ?? wizard.x + Math.cos(a) * 300;
@@ -4580,7 +4704,7 @@ function castSlash(state, wizard, spell) {
     if (dist(wizard.x, wizard.y, o.x, o.y) > spell.range + WIZARD.radius) continue;
     const ang = Math.atan2(o.y - wizard.y, o.x - wizard.x);
     if (Math.abs(normalizeAngle(ang - wizard.heading)) > half) continue;
-    o.health -= spell.damage;
+    damageWithAttack(state, o, spell.damage, spell, wizard.x, wizard.y);
     state.events.push({ type: 'slashhit', x: o.x, y: o.y, victim: o.id, color: o.color });
   }
   state.events.push({ type: 'slash', x: wizard.x, y: wizard.y, dir: wizard.heading });
@@ -4622,6 +4746,7 @@ function explodeProjectile(state, projectile, x, y, worldZ) {
     y,
     worldZ,
     radius: projectile.explosionRadius,
+    impactPower: projectile.splashDamage || projectile.damage,
     color: projectile.color,
   });
 }
@@ -4686,7 +4811,15 @@ function hitWizardWithProjectile(state, projectile, target, hitX, hitY, worldZ) 
       color: projectile.color,
     });
   }
-  damageWithAttack(state, target, damage, attack, hitX, hitY);
+  const incoming = normalize(projectile.vx || 0, projectile.vy || 0);
+  damageWithAttack(
+    state,
+    target,
+    damage,
+    attack,
+    target.x - incoming.x * 100,
+    target.y - incoming.y * 100,
+  );
   projectile.hitIds ||= [];
   projectile.hitIds.push(target.id);
   chainFromTarget(state, projectile, target);
@@ -4698,6 +4831,7 @@ function hitWizardWithProjectile(state, projectile, target, hitX, hitY, worldZ) 
     worldZ,
     color: projectile.color,
     victim: target.id,
+    impactPower: damage,
   });
   explodeProjectile(state, projectile, hitX, hitY, worldZ);
   if ((projectile.remainingPierce || 0) > 0) {
@@ -4731,8 +4865,7 @@ function steerHomingProjectile(state, projectile, dt) {
   if (!target || dist(projectile.x, projectile.y, target.x, target.y) > 1500) return;
   projectile.targetId = target.id;
   projectile.targetDistance = null;
-  const bodyBase =
-    (target.climbH || 0) + (target.flyH || 0) + (target.jumpH || 0) + (target.openingH || 0);
+  const bodyBase = wizardElevation(target);
   const targetWorldZ =
     terrainHeight(target.x, target.y) + bodyBase + (target.bodyHeight || BODY_HEIGHT) * 0.5;
   const projectileWorldZ = projectile.originGround + projectile.z;
@@ -4873,6 +5006,8 @@ export function stepSpells(state, dt) {
           z: b.z,
           worldZ: groundHere,
           color: b.color,
+          impactPower: b.damage,
+          radius: b.radius,
         });
         explodeProjectile(state, b, b.x, b.y, groundHere);
         done = true;
@@ -4892,7 +5027,16 @@ export function stepSpells(state, dt) {
           state.events.push({ type: 'bounce', x: b.x, y: b.y, worldZ, color: b.color });
           continue;
         }
-        state.events.push({ type: 'block', x: b.x, y: b.y, z: b.z, worldZ, color: b.color });
+        state.events.push({
+          type: 'block',
+          x: b.x,
+          y: b.y,
+          z: b.z,
+          worldZ,
+          color: b.color,
+          impactPower: b.damage,
+          radius: b.radius,
+        });
         explodeProjectile(state, b, b.x, b.y, worldZ);
         done = true;
         break;
@@ -4940,11 +5084,7 @@ export function stepSpells(state, dt) {
                 wizard.id === b.targetId && wizard.alive && !b.hitIds?.includes(wizard.id),
             );
       if (directTarget && b.targetDistance != null && b.travelled >= b.targetDistance) {
-        const bodyBase =
-          (directTarget.climbH || 0) +
-          (directTarget.flyH || 0) +
-          (directTarget.jumpH || 0) +
-          (directTarget.openingH || 0);
+        const bodyBase = wizardElevation(directTarget);
         const hitZ = bodyBase + (directTarget.bodyHeight || BODY_HEIGHT) * 0.55;
         done = hitWizardWithProjectile(
           state,
@@ -4959,8 +5099,7 @@ export function stepSpells(state, dt) {
 
       for (const wizard of state.wizards) {
         if (!wizard.alive || wizard.id === b.ownerId || b.hitIds?.includes(wizard.id)) continue;
-        const bodyBase =
-          (wizard.climbH || 0) + (wizard.flyH || 0) + (wizard.jumpH || 0) + (wizard.openingH || 0);
+        const bodyBase = wizardElevation(wizard);
         const bodyWorldBase = terrainHeight(wizard.x, wizard.y) + bodyBase;
         if (
           worldZ >= bodyWorldBase &&
@@ -5459,6 +5598,11 @@ export function update(state, inputs, dt) {
     // Once the player has landed, normal gameplay runs while remaining bots
     // continue their slow-fall in updateOpening. They join combat on landing.
     if (state.opening?.phase !== 'complete' && !w.openingLanded) continue;
+    setWaterContact(w, wizardWaterContact(state, w));
+    if (w.inWater && w.dotKind === 'burn') {
+      w.dotTimer = w.dotDamage = 0;
+      w.dotKind = null;
+    }
     if (w.slowTimer > 0) {
       w.slowTimer = Math.max(0, w.slowTimer - dt);
       if (w.slowTimer === 0) w.slowFactor = 1;
@@ -5549,7 +5693,7 @@ export function update(state, inputs, dt) {
       const abilityFlying = (w.abilityFlightTimer || 0) > 0;
       w.flying = abilityFlying || (state.sandbox && !!input.flying);
       const isMoving = Math.hypot(move.x, move.y) > 0.01;
-      updateStamina(w, !!input.run && !w.flying && !w.drill, isMoving, dt);
+      updateStamina(w, !!input.run && !w.flying && !w.drill && !w.swimming, isMoving, dt);
       updateMagicalDigging(state, w, input, dt);
       w.digDirection = input.digDirection;
       w.digAimPitch = Number.isFinite(input.digAimPitch) ? input.digAimPitch : 0;
@@ -5661,7 +5805,7 @@ export function update(state, inputs, dt) {
     const groundedForJump =
       w.climbState === 'top' ||
       (w.climbState == null && w.climbH <= 0 && (w.flyH || 0) <= 0 && undergroundGrounded);
-    if (jump && !w.flying && groundedForJump && (w.jumpH || 0) <= 0) {
+    if (jump && !w.flying && !w.swimming && groundedForJump && (w.jumpH || 0) <= 0) {
       w.jumpV = JUMP.velocity;
       w.runningJump = !!w.running && w.moving;
     }
@@ -5672,8 +5816,9 @@ export function update(state, inputs, dt) {
       if (attackId) castAttack(state, w, attackId, dt);
       else castSpell(state, w, w.spell); // legacy direct-spell input
     }
-    if (dig) {
+    if (dig && state.time >= (w.nextPrecisionDigTime || 0)) {
       const result = precisionDig(state, w, w.digDirection || 'forward');
+      w.nextPrecisionDigTime = state.time + (result.interval || SHOVEL.interval);
       if (!result.accepted && result.reason !== 'no-terrain') {
         const target = precisionDigTarget(state, w, w.digDirection || 'forward');
         state.events.push({
@@ -5685,8 +5830,9 @@ export function update(state, inputs, dt) {
           reason: result.reason,
         });
       }
-    } else {
+    } else if (!dig) {
       w.digging = false;
+      w.nextPrecisionDigTime = 0;
     }
     if (!w.drill) {
       const previousX = w.x;
@@ -5778,8 +5924,60 @@ export function update(state, inputs, dt) {
   }
 
   stepSpells(state, dt);
+  for (const wizard of state.wizards) stepHitKnockback(state, wizard, dt);
   state.terrainSupport?.stepCollapses();
   state.terrainFluids?.step(dt);
+  for (const wizard of state.wizards) {
+    if (!wizard.alive || !wizard.openingLanded) continue;
+    const wasWet = wizard.waterWasWet || false;
+    const contact = wizardWaterContact(state, wizard);
+    setWaterContact(wizard, contact);
+    if (contact) {
+      stepBuoyancy(wizard, contact, dt, inputs?.[wizard.playerIndex] || {}, state.terrain);
+      if (contact.swimming && contact.kind === 'river') {
+        const currentSpeed = Math.hypot(contact.currentX, contact.currentZ);
+        if (currentSpeed > 0)
+          moveWizard(
+            wizard,
+            contact.currentX,
+            contact.currentZ,
+            (dt * currentSpeed) /
+              (WIZARD.speed *
+                wizard.waterMoveScale *
+                (wizard.slowFactor || 1) *
+                (wizard.hasteFactor || 1)),
+            state.obstacles,
+          );
+      }
+      if (
+        !contact.swimming &&
+        wizard.drillFeetY != null &&
+        wizard.drillFeetY <= contact.ground + 4
+      ) {
+        wizard.drillFeetY = null;
+        wizard.waterVelocity = 0;
+      }
+      if (!wasWet || (wizard.moving && state.time >= (wizard.nextWaterRipple || 0))) {
+        state.events.push({
+          type: wasWet ? 'water-ripple' : 'water-splash',
+          wizardId: wizard.id,
+          x: wizard.x,
+          y: wizard.y,
+          worldZ: contact.level,
+          radius: wasWet ? 24 : 48,
+          color: '#b9edff',
+        });
+        wizard.nextWaterRipple = state.time + 0.4;
+      }
+      if (wizard.dotKind === 'burn') {
+        wizard.dotTimer = wizard.dotDamage = 0;
+        wizard.dotKind = null;
+      }
+    } else {
+      wizard.waterVelocity = 0;
+    }
+    wizard.waterWasWet = !!contact;
+  }
   if (state.time >= (state.nextLavaSupportTick || 0)) {
     state.nextLavaSupportTick = state.time + 0.5;
     for (const node of [...(state.terrainSupport?.nodes.values() || [])]) {

@@ -51,6 +51,11 @@ describe('single six-slot hotbar', () => {
     expect(state.wizards[0].inventorySlots[0].attackId).toBe('apprentice-bolt');
     expect(state.wizards[0].attackSlots[0]).toBe('apprentice-bolt');
     expect(state.wizards[0].inventorySlots).toHaveLength(6);
+    expect(state.events.at(-1)).toMatchObject({
+      type: 'inventory-pickup',
+      groundId: pickup.id,
+      wizardId: state.wizards[0].id,
+    });
     expect(collectGroundItem(state, state.wizards[0], pickup.id)).toBe(false);
   });
 

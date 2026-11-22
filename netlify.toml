@@ -1,3 +1,4 @@
+# Saved game changes are automatically published after a successful local build.
 [build]
   command = "npm run build"
   publish = "dist"

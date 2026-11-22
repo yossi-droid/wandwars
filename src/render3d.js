@@ -20,6 +20,7 @@ import {
   obstacleGroundHeight,
   RIVER_PATH,
   MAP_FEATURES,
+  NATURAL_WATER,
   riverDistance,
   OPENING,
   PORTAL_DESTINATIONS,
@@ -33,8 +34,11 @@ import {
 function wizardGround(wizard) {
   return wizard.drillFeetY ?? terrainHeight(wizard.x, wizard.y);
 }
+import { STYLE_SAMPLE, styleWeight, polishGround, buildRiversideDetails } from './fantasyStyle.js';
+import { advanceSwimPose, swimStroke, usesTunnelCamera, waterVisualHeight } from './swimVisuals.js';
 import { adsProfileForWeapon } from './ads.js';
 import { terrainChunkAt, terrainChunkKey } from './terrain.js';
+import { impactShakeStrength } from './impactFeedback.js';
 
 export const HUD_W = 1024;
 export const HUD_H = 576;
@@ -164,7 +168,15 @@ function finishTerrainColor(x, z, out) {
   const broad = Math.sin(x * 0.0021 + 0.7) * Math.cos(z * 0.0025 - 1.2);
   const fine = Math.sin(x * 0.0093 - 2.4) * Math.cos(z * 0.0107 + 0.3);
   out.offsetHSL(0, 0, broad * 0.025 + fine * 0.014);
-  return out;
+  return polishGround(
+    out,
+    x,
+    z,
+    terrainHeight(x, z),
+    originalTerrainHeight(x, z),
+    1,
+    riverDistance(x, z).distance,
+  );
 }
 function terrainColorAt(x, z, h, out) {
   const riverD = riverDistance(x, z).distance;
@@ -202,7 +214,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.06;
   renderer.shadowMap.enabled = !safeMode;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#9ac8df');
@@ -221,7 +233,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   // ---- Lighting (bright midday) --------------------------------------------
-  scene.add(new THREE.AmbientLight(0xd8e5eb, 0.5));
+  const ambient = new THREE.AmbientLight(0xd8e5eb, 0.5);
+  scene.add(ambient);
   // Direction from the world toward the sun — drives BOTH the sunlight and the
   // visible sun disc, so the disc sits exactly where the light and shadows point.
   const SUN_OFFSET = new THREE.Vector3(700, 520, 470);
@@ -246,7 +259,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.bias = -0.00008;
-  key.shadow.normalBias = 0.025;
+  key.shadow.normalBias = 0.6;
+  key.shadow.radius = 2;
   const sc = key.shadow.camera;
   sc.left = -900;
   sc.right = 900;
@@ -258,7 +272,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   scene.add(keyTarget);
   key.target = keyTarget;
   scene.add(key);
-  scene.add(new THREE.HemisphereLight(0xc9e7f5, 0x526142, 1.05));
+  const hemisphere = new THREE.HemisphereLight(0xc9e7f5, 0x526142, 1.05);
+  scene.add(hemisphere);
 
   // A visible sun: a bright disc with a soft glow, parked far away in the sun's
   // direction so it reads as a fixed point in the sky. It follows the player
@@ -532,6 +547,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   let ocean;
   let waterDetail;
   let waterMaterial;
+  let riversideWaterDetail;
   let land;
   let originalLandIndices;
   let terrainRevision = -1;
@@ -809,6 +825,15 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       c.fromBufferAttribute(colorAttr, i);
       const rockColor = biomeAt(pos.getX(i), pos.getZ(i)) === 'desert' ? C_DIRT : C_ROCK;
       c.lerp(rockColor, steepness * 0.58);
+      polishGround(
+        c,
+        pos.getX(i),
+        pos.getZ(i),
+        pos.getY(i),
+        originalTerrainHeight(pos.getX(i), pos.getZ(i)),
+        normals.getY(i),
+        riverDistance(pos.getX(i), pos.getZ(i)).distance,
+      );
       colorAttr.setXYZ(i, c.r, c.g, c.b);
     }
     colorAttr.needsUpdate = true;
@@ -860,7 +885,10 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       for (let ix = 0; ix < maskSize; ix++) {
         const x = ((ix + 0.5) / maskSize) * oceanRadius * 2 - oceanRadius;
         const z = oceanRadius - ((iz + 0.5) / maskSize) * oceanRadius * 2;
-        const water = THREE.MathUtils.smoothstep(-originalTerrainHeight(x, z), -8, 8);
+        const water =
+          NATURAL_WATER.surfaceAt(x, z)?.kind === 'ocean'
+            ? THREE.MathUtils.smoothstep(-originalTerrainHeight(x, z), -8, 8)
+            : 0;
         const offset = (iz * maskSize + ix) * 4;
         maskPixels[offset] = 255;
         maskPixels[offset + 1] = Math.round(water * 255);
@@ -918,6 +946,15 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         const steepness = 1 - tsmooth(data.normals[i + 1], 0.56, 0.93);
         if (steepness > 0.02)
           color.lerp(biomeAt(x, z) === 'desert' ? C_DIRT : C_ROCK, steepness * 0.58);
+        polishGround(
+          color,
+          x,
+          z,
+          y,
+          originalTerrainHeight(x, z),
+          data.normals[i + 1],
+          riverDistance(x, z).distance,
+        );
         colors[i] = color.r;
         colors[i + 1] = color.g;
         colors[i + 2] = color.b;
@@ -954,8 +991,6 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   function buildWaterways() {
-    const control = RIVER_PATH.map(([x, z]) => new THREE.Vector3(x, 0, z));
-    const curve = new THREE.CatmullRomCurve3(control, false, 'centripetal', 0.45);
     const segments = 150;
     const verts = [];
     const uvs = [];
@@ -964,12 +999,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     const rightBank = [];
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
-      const p = curve.getPoint(t);
-      const tangent = curve.getTangent(t).normalize();
-      const nx = -tangent.z;
-      const nz = tangent.x;
-      const width = 115 + 32 * Math.sin(t * Math.PI * 5.3) + 34 * t;
-      const waterY = terrainHeight(p.x, p.z) + 10;
+      const sample = NATURAL_WATER.riverSamples[i];
+      const p = { x: sample.x, z: sample.z };
+      const { nx, nz, width, level: waterY } = sample;
       for (const side of [-1, 1]) {
         verts.push(p.x + nx * width * side, waterY, p.z + nz * width * side);
         uvs.push(t * 18, side < 0 ? 0 : 1);
@@ -986,7 +1018,39 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     riverGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     riverGeo.setIndex(indices);
     riverGeo.computeVertexNormals();
-    const river = new THREE.Mesh(riverGeo, waterMaterial);
+    const riverColors = [];
+    const riverColor = new THREE.Color();
+    for (let i = 0; i <= segments; i++) {
+      const p = NATURAL_WATER.riverSamples[i];
+      riverColor
+        .copy(waterMaterial.color)
+        .lerp(new THREE.Color(0x32b9bd), styleWeight(p.x, p.z) * 0.8);
+      for (let side = 0; side < 2; side++)
+        riverColors.push(riverColor.r, riverColor.g, riverColor.b);
+    }
+    riverGeo.setAttribute('color', new THREE.Float32BufferAttribute(riverColors, 3));
+    const riverMaterial = waterMaterial.clone();
+    riverMaterial.color.set(0xffffff);
+    riverMaterial.vertexColors = true;
+    riverMaterial.roughness = 0.28;
+    riverMaterial.bumpScale = 0.8;
+    riverMaterial.bumpMap = waterDetail.clone();
+    riverMaterial.bumpMap.repeat.set(1, 1);
+    riverMaterial.bumpMap.needsUpdate = true;
+    riversideWaterDetail = riverMaterial.bumpMap;
+    let groupStart = 0,
+      previousMaterial = -1;
+    for (let i = 0; i < segments; i++) {
+      const p = NATURAL_WATER.riverSamples[i];
+      const material = styleWeight(p.x, p.z) > 0.001 ? 1 : 0;
+      if (previousMaterial !== -1 && material !== previousMaterial) {
+        riverGeo.addGroup(groupStart * 6, (i - groupStart) * 6, previousMaterial);
+        groupStart = i;
+      }
+      previousMaterial = material;
+    }
+    riverGeo.addGroup(groupStart * 6, (segments - groupStart) * 6, previousMaterial);
+    const river = new THREE.Mesh(riverGeo, [waterMaterial, riverMaterial]);
     river.receiveShadow = true;
     scene.add(river);
 
@@ -1003,7 +1067,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       scene.add(foam);
     }
 
-    const pondY = terrainHeight(MAP_FEATURES.pond.x, MAP_FEATURES.pond.y) + 24;
+    const pondY = NATURAL_WATER.pondLevel;
     const pond = new THREE.Mesh(new THREE.CircleGeometry(MAP_FEATURES.pond.r, 64), waterMaterial);
     pond.rotation.x = -Math.PI / 2;
     pond.position.set(MAP_FEATURES.pond.x, pondY, MAP_FEATURES.pond.y);
@@ -1028,6 +1092,20 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     buildLandmarks();
     buildDetails();
   }
+
+  const riverside = buildRiversideDetails(
+    scene,
+    terrainHeight,
+    NATURAL_WATER,
+    buildObstacles(),
+    safeMode,
+  );
+  glCanvas.dataset.styleSample = 'riverside';
+  glCanvas.dataset.styleDetailInstances = String(
+    riverside.grassMesh.count + riverside.flowers.count,
+  );
+  const sampleFog = new THREE.Fog(0xb6d8de, 5000, 12500);
+  scene.fog = sampleFog;
 
   // Safe mode preserves the complete collision layout with very cheap shapes.
   // It is a real playable 3D fallback, not the full detailed renderer relabeled:
@@ -2062,6 +2140,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       part.updateMatrix();
       treeMatrix.multiplyMatrices(parent.matrix, part.matrix);
       mesh.setMatrixAt(index, treeMatrix);
+      const w = styleWeight(parent.position.x, parent.position.z);
+      mesh.setColorAt(index, new THREE.Color(1 + w * 0.25, 1 + w * 0.4, 1 - w * 0.04));
     };
     const crownParts = [
       [-20, 120, -12, 42, 35, 38],
@@ -2122,6 +2202,13 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       if (o.landmark) continue;
       if (o.kind === 'house') {
         const g = new THREE.Group();
+        const sampleHouse = styleWeight(o.x, o.y) > 0.3;
+        const sampleWall = sampleHouse
+          ? new THREE.MeshStandardMaterial({ color: 0xefd9a9, roughness: 0.92 })
+          : wallMats[o.wall];
+        const sampleRoof = sampleHouse
+          ? new THREE.MeshStandardMaterial({ color: 0x3b7289, roughness: 0.82 })
+          : roofMats[o.roof];
         // Seat the house on the ground: floor at the HIGHEST terrain under the
         // footprint (so nothing pokes up through the floor), with a foundation
         // that fills the downhill gap (so it never floats). Fixes slope clipping.
@@ -2135,13 +2222,13 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
             if (hh < minH) minH = hh;
           }
         }
-        const walls = new THREE.Mesh(wallGeo, wallMats[o.wall]);
+        const walls = new THREE.Mesh(wallGeo, sampleWall);
         walls.scale.set(o.w, o.h, o.d);
         walls.position.y = o.h / 2;
         walls.castShadow = true;
         walls.receiveShadow = true;
         g.add(walls);
-        const roof = new THREE.Mesh(makeGableRoof(o.w + 46, o.d + 54, o.h * 0.7), roofMats[o.roof]);
+        const roof = new THREE.Mesh(makeGableRoof(o.w + 46, o.d + 54, o.h * 0.7), sampleRoof);
         roof.position.y = o.h;
         roof.castShadow = true;
         roof.receiveShadow = true;
@@ -2254,7 +2341,11 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         world.add(g);
       } else if (o.kind === 'rock') {
         const rockMat = rockMats[Math.abs(Math.floor(o.rx * 17)) % rockMats.length];
-        const m = new THREE.Mesh(rockGeo, rockMat);
+        const localRock =
+          styleWeight(o.x, o.y) > 0.3
+            ? new THREE.MeshStandardMaterial({ color: 0x8e9c9e, roughness: 1, flatShading: true })
+            : rockMat;
+        const m = new THREE.Mesh(rockGeo, localRock);
         m.scale.set(o.s, o.s * o.sy, o.s);
         m.position.set(o.x, terrainHeight(o.x, o.y) + o.s * 0.3, o.y);
         m.rotation.set(o.rx, o.ry, o.rz);
@@ -3488,6 +3579,20 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       setRigDigging(rig, rig.diggingMode);
     });
     rig.shovelLoad = shovelModelPromise;
+    rig.swimBones = [];
+    for (const [i, side] of ['Left', 'Right'].entries()) {
+      for (const [part, suffix] of [
+        ['arm', 'Arm'],
+        ['elbow', 'ForeArm'],
+        ['leg', 'UpLeg'],
+        ['knee', 'Leg'],
+      ]) {
+        const bone =
+          model.getObjectByName('mixamorig' + side + suffix) ||
+          model.getObjectByName('mixamorig:' + side + suffix);
+        if (bone) rig.swimBones.push({ bone, part, side: i, base: bone.quaternion.clone() });
+      }
+    }
     // Fallback shovel is attached to the hand too, so it is visible even if
     // the optional Blender asset is still decoding during the opening.
     if (rightHand) {
@@ -3530,9 +3635,11 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     const stoppingLocomotion = name === 'Idle' && previousLocomotion;
     const fadeDuration = stoppingLocomotion
       ? 0.06
-      : name === 'JumpSmooth' || previousName === 'JumpSmooth'
-        ? 0.16
-        : 0.22;
+      : name === 'Cast' || previousName === 'Cast'
+        ? 0.1
+        : name === 'JumpSmooth' || previousName === 'JumpSmooth'
+          ? 0.16
+          : 0.22;
 
     // Preserve normalized foot-cycle time when changing between walk and run.
     // Restarting at frame zero made the planted foot pop backward on every
@@ -3598,6 +3705,43 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     upper.quaternion.slerp(digPoseLocal, rig.digPose);
   }
 
+  const swimWorld = new THREE.Quaternion(),
+    swimParent = new THREE.Quaternion();
+  const swimDelta = new THREE.Quaternion(),
+    swimLocal = new THREE.Quaternion();
+  const swimSideAxis = new THREE.Vector3(),
+    swimForwardAxis = new THREE.Vector3();
+  function applySwimAnimation(rig, w, dt, available) {
+    rig.swimPose ||= {};
+    advanceSwimPose(rig.swimPose, w.swimming && available, w.moving, dt);
+    const { weight, phase, drive } = rig.swimPose;
+    swimSideAxis.set(-Math.sin(w.heading), 0, Math.cos(w.heading));
+    swimForwardAxis.set(Math.cos(w.heading), 0, Math.sin(w.heading));
+    for (const pose of rig.swimBones || []) {
+      pose.base.copy(pose.bone.quaternion);
+      if (weight < 0.001) continue;
+      const stroke = swimStroke(phase, pose.side, drive);
+      pose.bone.updateWorldMatrix(true, false);
+      pose.bone.getWorldQuaternion(swimWorld);
+      swimDelta.setFromAxisAngle(swimSideAxis, stroke[pose.part] * weight);
+      swimWorld.premultiply(swimDelta);
+      if (pose.part === 'arm') {
+        swimDelta.setFromAxisAngle(swimForwardAxis, stroke.spread * weight);
+        swimWorld.premultiply(swimDelta);
+      }
+      pose.bone.parent.getWorldQuaternion(swimParent);
+      swimLocal.copy(swimParent).invert().multiply(swimWorld);
+      pose.bone.quaternion.copy(swimLocal);
+    }
+    rig.advancedModel.rotation.z = -0.22 * drive * weight;
+    if (rig.isPlayer) {
+      glCanvas.dataset.swimAnimation = weight > 0.05 ? (drive > 0.3 ? 'stroke' : 'tread') : 'none';
+      glCanvas.dataset.swimBlend = weight.toFixed(3);
+      glCanvas.dataset.swimArmSwing = swimStroke(phase, 0, drive).arm.toFixed(3);
+      glCanvas.dataset.swimLegKick = swimStroke(phase, 0, drive).leg.toFixed(3);
+    }
+  }
+
   function updateAdvancedWizard(rig, w, dt) {
     const mvx = w.x - (rig.prevX ?? w.x);
     const mvy = w.y - (rig.prevY ?? w.y);
@@ -3611,20 +3755,21 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     else rig.motionHold = Math.max(0, (rig.motionHold ?? 0) - dt);
     const hasMovementIntent = typeof w.moving === 'boolean';
     const movingNow = hasMovementIntent ? w.moving : rig.motionHold > 0;
-    const motionTarget = movingNow ? 1 : 0;
+    const motionTarget = movingNow && !w.swimming ? 1 : 0;
     const motionRate = motionTarget > (rig.motionBlend ?? 0) ? 9 : 24;
     rig.motionBlend =
       (rig.motionBlend ?? 0) +
       (motionTarget - (rig.motionBlend ?? 0)) * (1 - Math.exp(-motionRate * dt));
     let action = 'Idle';
     if (w.climbState === 'wall') action = 'Climb';
-    else if (w.digging || w.slashTimer > 0 || (w.castTimer || 0) > 0) action = 'Cast';
+    else if ((!w.digMode && w.digging) || w.slashTimer > 0 || (w.castTimer || 0) > 0)
+      action = 'Cast';
     else if ((w.jumpH || 0) > 1) action = 'JumpSmooth';
-    else if (movingNow) action = w.running ? 'Run' : 'Walk';
+    else if (movingNow && !w.swimming) action = w.running ? 'Run' : 'Walk';
     playAdvancedAction(rig, action);
     glCanvas.dataset.playerAnimation = action;
     glCanvas.dataset.playerModel = 'advanced';
-    rig.advancedMixer.timeScale =
+    const animationRate =
       action === 'Run'
         ? 1.5
         : action === 'Walk'
@@ -3636,7 +3781,13 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
                 ? 0
                 : 0.82
               : 1;
+    rig.animationRate =
+      (rig.animationRate ?? animationRate) +
+      (animationRate - (rig.animationRate ?? animationRate)) * (1 - Math.exp(-14 * dt));
+    rig.advancedMixer.timeScale = rig.animationRate;
+    for (const pose of rig.swimBones || []) pose.bone.quaternion.copy(pose.base);
     rig.advancedMixer.update(dt);
+    applySwimAnimation(rig, w, dt, action === 'Idle' || action === 'Walk' || action === 'Run');
     extendDigHand(rig, w);
     rig.group.position.y =
       wizardGround(w) + (w.climbH || 0) + (w.flyH || 0) + (w.jumpH || 0) + (w.openingH || 0);
@@ -3690,6 +3841,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         ? 4.4
         : 0;
     rig.climbPhase = (rig.climbPhase ?? 0) + dt * climbRate;
+    rig.swimPhase = (rig.swimPhase ?? 0) + dt * 3.2;
     const lerp = (a, b, t) => a + (b - a) * t;
 
     for (let i = 0; i < 2; i++) {
@@ -3708,6 +3860,14 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       let armX = -side * 0.13;
       let armZ = -(0.34 + runBlend * 0.16) * s * amt;
       let elbowZ = -(0.22 + 0.22 * Math.max(0, -s)) * amt;
+      if (w.swimming) {
+        const stroke = Math.sin(rig.swimPhase + i * Math.PI);
+        hipZ = stroke * 0.16;
+        kneeZ = -0.38;
+        armX = -side * 0.4;
+        armZ = stroke * 0.65;
+        elbowZ = -0.55;
+      }
       // --- Climb pose (blended in by `climb`) ---
       if (climb > 0.001) {
         const climbS = Math.sin(rig.climbPhase + (i === 0 ? 0 : Math.PI));
@@ -3821,20 +3981,95 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       m.add(glow);
       m.userData.core = core;
       m.userData.glow = glow;
+      const traceGeometry = new THREE.BufferGeometry();
+      traceGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(24), 3));
+      const traceColors = [];
+      for (let i = 0; i < 8; i++)
+        traceColors.push((1 - i / 8) ** 2, (1 - i / 8) ** 2, (1 - i / 8) ** 2);
+      traceGeometry.setAttribute('color', new THREE.Float32BufferAttribute(traceColors, 3));
+      const trace = new THREE.Line(
+        traceGeometry,
+        new THREE.LineBasicMaterial({
+          color: 0xffffff,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.72,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+      );
+      trace.frustumCulled = false;
+      m.userData.trace = trace;
+      scene.add(trace);
       scene.add(m);
       spellPool.push(m);
     }
-    for (let i = 0; i < spellPool.length; i++) spellPool[i].visible = i < n;
+    for (let i = 0; i < spellPool.length; i++) {
+      spellPool[i].visible = i < n;
+      if (i >= n) {
+        spellPool[i].userData.trace.visible = false;
+        spellPool[i].userData.traceId = null;
+      }
+    }
     return spellPool;
   }
 
   // Tiny pooled impact sparks. Hits, walls, and terrain all emit the same brief
   // gold-white burst without creating garbage during busy bot fights.
   const sparkPool = [];
+  const impactRings = [];
+  const impactRingGeometry = new THREE.TorusGeometry(1, 0.025, 4, 32);
+  function spawnImpactRing(event, worldY) {
+    let ring = impactRings.find((r) => r.life <= 0);
+    if (!ring && impactRings.length < 8) {
+      const mesh = new THREE.Mesh(
+        impactRingGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0xffe6b8,
+          transparent: true,
+          opacity: 0.7,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      scene.add(mesh);
+      ring = { mesh, life: 0 };
+      impactRings.push(ring);
+    }
+    if (!ring) return;
+    ring.life = 0.32;
+    ring.radius = Math.min(100, Math.max(30, event.radius || event.impactPower || 45));
+    ring.mesh.position.set(event.x, worldY + 3, event.y);
+    ring.mesh.material.color.set(event.color || 0xffd47d);
+    ring.mesh.visible = true;
+  }
   let sparkEventBatch = null;
   const fallingRoofs = [];
   let fallingRoofBatch = null;
   let collapseShake = 0;
+  let impactShake = 0;
+  let impactClock = 0;
+  let dirtBursts = 0;
+  let queuedVisualEvents = [];
+  let receivedVisualEvents = new WeakSet();
+  function queueMatchEvent(event) {
+    if (receivedVisualEvents.has(event)) return;
+    receivedVisualEvents.add(event);
+    queuedVisualEvents.push(event);
+  }
+  function updateImpactShake(events, dt, player) {
+    impactClock += dt;
+    impactShake *= Math.exp(-10 * dt);
+    if (impactShake < 0.02) impactShake = 0;
+    const height = player ? wizardGround(player) + 80 : 0;
+    for (const event of events) {
+      impactShake = Math.max(impactShake, impactShakeStrength(event, player, height));
+    }
+    glCanvas.dataset.impactShake = impactShake.toFixed(3);
+  }
   const fallingRoofGeometry = new THREE.IcosahedronGeometry(1, 1);
   const sparkGeo = new THREE.TetrahedronGeometry(2.2, 0);
   const sparkMats = [
@@ -3861,12 +4096,43 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     sparkMats[0],
   ];
   const digMagicMat = new THREE.MeshBasicMaterial({
-    color: 0xff3038,
+    color: new THREE.Color(0xff423c).multiplyScalar(2.8),
     transparent: true,
     opacity: 0.85,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
+    toneMapped: false,
   });
+  const digGoldMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(0xffd36a).multiplyScalar(3),
+    transparent: true,
+    opacity: 0.95,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const dirtGlowCanvas = document.createElement('canvas');
+  dirtGlowCanvas.width = dirtGlowCanvas.height = 64;
+  const dirtGlowContext = dirtGlowCanvas.getContext('2d');
+  const dirtGlowGradient = dirtGlowContext.createRadialGradient(32, 32, 0, 32, 32, 32);
+  dirtGlowGradient.addColorStop(0, 'rgba(255,255,255,1)');
+  dirtGlowGradient.addColorStop(0.18, 'rgba(255,255,255,0.9)');
+  dirtGlowGradient.addColorStop(0.48, 'rgba(255,255,255,0.28)');
+  dirtGlowGradient.addColorStop(1, 'rgba(255,255,255,0)');
+  dirtGlowContext.fillStyle = dirtGlowGradient;
+  dirtGlowContext.fillRect(0, 0, 64, 64);
+  const dirtGlowTexture = new THREE.CanvasTexture(dirtGlowCanvas);
+  const dirtGlowMaterials = [0xff5438, 0xffd36a].map(
+    (color) =>
+      new THREE.SpriteMaterial({
+        map: dirtGlowTexture,
+        color,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+  );
   const digBlockedMat = new THREE.MeshBasicMaterial({
     color: 0xfb7185,
     transparent: true,
@@ -3891,11 +4157,15 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
   function freeSpark(index) {
     let spark = sparkPool.find((s) => !s.active);
-    if (!spark && sparkPool.length < 96) {
+    if (!spark && sparkPool.length < 160) {
       const mesh = new THREE.Mesh(sparkGeo, sparkMats[index % sparkMats.length]);
+      const glow = new THREE.Sprite(dirtGlowMaterials[index % 2]);
+      glow.scale.set(10, 10, 1);
+      glow.visible = false;
+      mesh.add(glow);
       mesh.visible = false;
       scene.add(mesh);
-      spark = { mesh, active: false, life: 0, maxLife: 0, vx: 0, vy: 0, vz: 0 };
+      spark = { mesh, glow, active: false, life: 0, maxLife: 0, vx: 0, vy: 0, vz: 0 };
       sparkPool.push(spark);
     }
     if (!spark) spark = sparkPool.reduce((oldest, s) => (s.life < oldest.life ? s : oldest));
@@ -3903,37 +4173,65 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   function spawnImpactSparks(event) {
+    if (!Number.isFinite(event.x) || !Number.isFinite(event.y)) return;
     const worldY = event.worldZ ?? terrainHeight(event.x, event.y) + (event.z || 0);
     const magicalDig = event.type === 'dig' || event.type === 'dig-blocked';
-    for (let i = 0; i < (event.type === 'terrain-collapse' ? 28 : magicalDig ? 14 : 8); i++) {
+    const destroyedEarth = ['dig', 'dig-spell', 'drill', 'terrain-collapse'].includes(event.type);
+    if (!magicalDig && !destroyedEarth) spawnImpactRing(event, worldY);
+    if (destroyedEarth) glCanvas.dataset.dirtBursts = String(++dirtBursts);
+    const count = destroyedEarth ? (event.type === 'drill' ? 18 : 32) : magicalDig ? 14 : 8;
+    for (let i = 0; i < count; i++) {
       const spark = freeSpark(i);
-      spark.mesh.material = magicalDig
-        ? event.type === 'dig-blocked'
-          ? digBlockedMat
-          : i % 3 === 0
+      spark.glowingDirt = destroyedEarth && i % 3 !== 0;
+      spark.glow.visible = spark.glowingDirt;
+      spark.glow.material = dirtGlowMaterials[i % 2];
+      spark.mesh.material = destroyedEarth
+        ? spark.glowingDirt
+          ? i % 2
             ? digMagicMat
-            : digDustMaterial(event.color)
-        : event.type === 'drill' || event.type === 'terrain-collapse'
-          ? earthSparkMats[i % 3]
-          : sparkMats[i % 2];
+            : digGoldMat
+          : digDustMaterial(event.color)
+        : magicalDig
+          ? event.type === 'dig-blocked'
+            ? digBlockedMat
+            : i % 3 === 0
+              ? digMagicMat
+              : digDustMaterial(event.color)
+          : event.type === 'drill' || event.type === 'terrain-collapse'
+            ? earthSparkMats[i % 3]
+            : sparkMats[i % 2];
       const angle = Math.random() * Math.PI * 2;
-      const speed =
-        event.type === 'terrain-collapse' ? 170 + Math.random() * 150 : 75 + Math.random() * 95;
+      const speed = destroyedEarth ? 120 + Math.random() * 180 : 75 + Math.random() * 95;
       const lift = 0.3 + Math.random() * 0.7;
       spark.active = true;
-      spark.life = spark.maxLife =
-        event.type === 'terrain-collapse' ? 0.5 + Math.random() * 0.4 : 0.16 + Math.random() * 0.16;
+      spark.life = spark.maxLife = destroyedEarth
+        ? 0.65 + Math.random() * 0.45
+        : 0.16 + Math.random() * 0.16;
       spark.vx = Math.cos(angle) * speed * (1 - lift * 0.35);
       spark.vy = speed * lift;
       spark.vz = Math.sin(angle) * speed * (1 - lift * 0.35);
       spark.mesh.position.set(event.x, worldY, event.y);
+      if (destroyedEarth) {
+        const spread = Math.min(55, (event.radius || 45) * 0.35);
+        spark.mesh.position.x += Math.cos(angle) * Math.random() * spread;
+        spark.mesh.position.z += Math.sin(angle) * Math.random() * spread;
+        spark.mesh.position.y += 8 + Math.random() * spread;
+      }
       spark.mesh.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-      spark.mesh.scale.setScalar(event.type === 'drill' ? 1.4 + (i % 3) * 0.25 : 1);
+      spark.baseScale = spark.glowingDirt ? 1.6 + Math.random() * 1.3 : 1;
+      spark.mesh.scale.setScalar(spark.baseScale);
       spark.mesh.visible = true;
     }
   }
 
   function updateImpactSparks(events, dt) {
+    for (const ring of impactRings) {
+      ring.life = Math.max(0, ring.life - dt);
+      ring.mesh.visible = ring.life > 0;
+      const t = 1 - ring.life / 0.32;
+      ring.mesh.scale.setScalar(ring.radius * (0.35 + t));
+      ring.mesh.material.opacity = (1 - t) * 0.7;
+    }
     for (const spark of sparkPool) {
       if (!spark.active) continue;
       spark.life -= dt;
@@ -3942,14 +4240,17 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         spark.mesh.visible = false;
         continue;
       }
-      spark.vy -= 360 * dt;
+      spark.vy -= (spark.glowingDirt ? 160 : 360) * dt;
       spark.mesh.position.x += spark.vx * dt;
       spark.mesh.position.y += spark.vy * dt;
       spark.mesh.position.z += spark.vz * dt;
       spark.mesh.rotation.x += 14 * dt;
       spark.mesh.rotation.z += 18 * dt;
-      spark.mesh.scale.setScalar(Math.max(0.08, spark.life / spark.maxLife));
+      spark.mesh.scale.setScalar(spark.baseScale * Math.max(0.08, spark.life / spark.maxLife));
     }
+    glCanvas.dataset.dirtGlowParticles = String(
+      sparkPool.filter((s) => s.active && s.glowingDirt).length,
+    );
     if (events === sparkEventBatch) return;
     sparkEventBatch = events;
     for (const event of events || []) {
@@ -3972,6 +4273,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         spawnImpactSparks(event);
       }
     }
+    glCanvas.dataset.dirtGlowParticles = String(
+      sparkPool.filter((s) => s.active && s.glowingDirt).length,
+    );
   }
 
   function updateFallingRoofs(events, dt, player) {
@@ -4017,6 +4321,46 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   // simulation events, so give each one a short-lived 3D shape. This makes the
   // new attacks readable at a glance instead of differing only in hidden stats.
   const attackEffects = [];
+  const waterRipplePool = [];
+  const waterRippleGeometry = new THREE.TorusGeometry(1, 0.045, 5, 36);
+  function updateWaterEffects(events, dt) {
+    for (const ripple of waterRipplePool) {
+      ripple.life = Math.max(0, ripple.life - dt);
+      ripple.mesh.visible = ripple.life > 0;
+      if (!ripple.life) continue;
+      const progress = 1 - ripple.life / 0.9;
+      ripple.mesh.scale.setScalar(ripple.radius * (0.25 + progress * 1.5));
+      ripple.mesh.material.opacity = (1 - progress) * 0.65;
+    }
+    for (const event of events) {
+      if (event.type !== 'water-splash' && event.type !== 'water-ripple') continue;
+      let ripple = waterRipplePool.find((item) => item.life <= 0);
+      if (!ripple && waterRipplePool.length < 32) {
+        const mesh = new THREE.Mesh(
+          waterRippleGeometry,
+          new THREE.MeshBasicMaterial({
+            color: 0xb9edff,
+            transparent: true,
+            opacity: 0.6,
+            depthWrite: false,
+          }),
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        scene.add(mesh);
+        ripple = { mesh, life: 0, radius: 24 };
+        waterRipplePool.push(ripple);
+      }
+      if (!ripple) continue;
+      ripple.life = 0.9;
+      ripple.radius = event.radius;
+      ripple.mesh.visible = true;
+      ripple.mesh.position.set(event.x, event.worldZ + 2, event.y);
+      ripple.mesh.scale.setScalar(event.radius * 0.25);
+    }
+    glCanvas.dataset.waterRipples = String(
+      waterRipplePool.filter((ripple) => ripple.life > 0).length,
+    );
+  }
   let attackEffectBatch = null;
   const effectLineGeometry = new THREE.CylinderGeometry(1, 1, 1, 10);
   const effectSphereGeometry = new THREE.SphereGeometry(1, 18, 10);
@@ -4152,6 +4496,107 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       attackPickupPool[index].visible = index < n;
     }
     return attackPickupPool;
+  }
+
+  // Pickup rewards are granted by the simulation immediately. Their visuals
+  // travel independently to the live hand, so movement never delays inventory
+  // updates and an item cannot be claimed twice during its flight.
+  const pickupVisualById = new Map();
+  const pickupFlights = [];
+  const pickupFlightTarget = new THREE.Vector3();
+  let pickupFlightEvents = new WeakSet();
+  let pickupFlightsStarted = 0;
+  let pickupFlightsCompleted = 0;
+
+  function animatePickup(event, state) {
+    if (event.groundId == null || pickupFlightEvents.has(event)) return;
+    const pickup = state.attackPickups?.find((item) => item.id === event.groundId);
+    const wizard = state.wizards.find((item) => item.id === event.wizardId);
+    if (!pickup || !wizard?.alive) return;
+    pickupFlightEvents.add(event);
+    let flight = pickupFlights.find((item) => !item.active);
+    if (!flight && pickupFlights.length < 24) {
+      const visual = new THREE.Group();
+      const core = new THREE.Mesh(
+        pickupCoreGeometry,
+        new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+      );
+      visual.add(core);
+      scene.add(visual);
+      flight = { visual, core, start: new THREE.Vector3(), model: null, modelName: null };
+      pickupFlights.push(flight);
+    }
+    if (!flight) {
+      flight = pickupFlights.reduce((oldest, item) =>
+        item.elapsed > oldest.elapsed ? item : oldest,
+      );
+    }
+    const source = pickupVisualById.get(pickup.id);
+    flight.start.copy(
+      source?.position ||
+        new THREE.Vector3(pickup.x, terrainHeight(pickup.x, pickup.y) + 34, pickup.y),
+    );
+    flight.visual.position.copy(flight.start);
+    flight.visual.quaternion.copy(source?.quaternion || new THREE.Quaternion());
+    flight.initialScale = source?.scale.x || 1;
+    flight.visual.scale.setScalar(flight.initialScale);
+    flight.core.material.color
+      .set(LOOT_RARITIES[pickup.rarity]?.color || LOOT_RARITIES.common.color)
+      .multiplyScalar(1.8);
+    const modelName = pickupModelName(pickup);
+    if (flight.modelName !== modelName) {
+      if (flight.model) flight.visual.remove(flight.model);
+      flight.model = null;
+      flight.modelName = modelName;
+    }
+    if (!flight.model && itemModels.has(modelName)) {
+      flight.model = itemModels.get(modelName).clone(true);
+      flight.visual.add(flight.model);
+    }
+    flight.core.visible = !flight.model;
+    flight.wizardId = wizard.id;
+    flight.elapsed = 0;
+    flight.active = true;
+    flight.visual.visible = true;
+    if (source && pickup.collectedBy != null) source.visible = false;
+    glCanvas.dataset.pickupFlightsStarted = String(++pickupFlightsStarted);
+  }
+
+  function updatePickupFlights(state, dt) {
+    let count = 0;
+    let progress = 0;
+    let distance = 0;
+    for (const flight of pickupFlights) {
+      if (!flight.active) continue;
+      const wizard = state.wizards.find((item) => item.id === flight.wizardId);
+      const rig = wizards.get(flight.wizardId);
+      if (!wizard?.alive || !rig) {
+        flight.active = false;
+        flight.visual.visible = false;
+        continue;
+      }
+      rig.group.updateMatrixWorld(true);
+      if (rig.digHand) rig.digHand.getWorldPosition(pickupFlightTarget);
+      else pickupFlightTarget.copy(rig.group.position).add(new THREE.Vector3(0, 90, 0));
+      flight.elapsed += dt;
+      const t = Math.min(1, flight.elapsed / 0.52);
+      const eased = t * t * (3 - 2 * t);
+      flight.visual.position.copy(flight.start).lerp(pickupFlightTarget, eased);
+      flight.visual.position.y += Math.sin(Math.PI * t) * 24;
+      flight.visual.scale.setScalar(flight.initialScale * (1 - eased * 0.78));
+      flight.visual.rotation.y += dt * 3 * (1 - t);
+      distance = flight.visual.position.distanceTo(pickupFlightTarget);
+      progress = t;
+      if (t >= 1) {
+        flight.active = false;
+        flight.visual.visible = false;
+        glCanvas.dataset.pickupFlightsCompleted = String(++pickupFlightsCompleted);
+        glCanvas.dataset.pickupCompletedHandDistance = distance.toFixed(3);
+      } else count++;
+    }
+    glCanvas.dataset.pickupFlightCount = String(count);
+    glCanvas.dataset.pickupFlightProgress = progress.toFixed(4);
+    glCanvas.dataset.pickupFlightHandDistance = distance.toFixed(3);
   }
 
   // ---- Camera: third-person, over-the-shoulder (Fortnite-style) ------------
@@ -4314,11 +4759,21 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     adsAmount = THREE.MathUtils.clamp(amount, 0, 1);
   }
 
+  const waterCamera = {};
   function updateCamera(state, dt, focusIndex) {
     const pl = state.wizards.find((w) => w.isPlayer && w.playerIndex === focusIndex);
     if (!pl) return;
-    const pth =
+    const localStyle = styleWeight(pl.x, pl.y);
+    sampleFog.near = 5000 + (1 - localStyle) * 20000;
+    sampleFog.far = 12500 + (1 - localStyle) * 20000;
+    key.intensity = 2.55 - localStyle * 0.6;
+    ambient.intensity = 0.5 + localStyle * 0.25;
+    hemisphere.intensity = 1.05 + localStyle * 0.3;
+    renderer.toneMappingExposure = 1.06 - localStyle * 0.04;
+    const rawHeight =
       wizardGround(pl) + (pl.climbH || 0) + (pl.flyH || 0) + (pl.jumpH || 0) + (pl.openingH || 0);
+    const pth = waterVisualHeight(waterCamera, pl, rawHeight, dt);
+    glCanvas.dataset.cameraWaterHeight = pth.toFixed(3);
     // Keep the sun (and its shadow frustum) centered on the player.
     keyTarget.position.set(pl.x, pth, pl.y);
     key.position.set(pl.x + SUN_OFFSET.x, SUN_OFFSET.y + pth, pl.y + SUN_OFFSET.z);
@@ -4345,7 +4800,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     let distance = THREE.MathUtils.lerp(CAM.dist, CAM_ADS.dist, adsAmount);
     let sideRatio = THREE.MathUtils.lerp(CAM.side, CAM_ADS.side, adsAmount);
     let dropRatio = THREE.MathUtils.lerp(CAM.drop, CAM_ADS.drop, adsAmount);
-    const excavating = pl.drillFeetY != null;
+    const excavating = usesTunnelCamera(pl, terrainHeight(pl.x, pl.y));
     if (excavating) {
       // A normal shoulder boom can cross a newly carved vertical wall. Keep
       // the camera inside the player-safe 126-unit drill passage instead.
@@ -4380,6 +4835,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       const maxAboveGround = (anchorY - (pth + 45)) / -yPerDistance;
       distance = Math.min(distance, Math.max(72, maxAboveGround));
     }
+    glCanvas.dataset.cameraBoom = distance.toFixed(2);
+    glCanvas.dataset.cameraTunnel = String(excavating);
     const shoulder = distance * sideRatio;
     const lift = distance * dropRatio;
     const desired = new THREE.Vector3(
@@ -4410,10 +4867,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         : state.obstacles;
     clipBoom(_pivot, camPos, boomObstacles);
     // Keep the camera above the ground so it never sinks into a hill/mountain.
-    let camGround =
-      pl.drillFeetY == null
-        ? terrainHeight(camPos.x, camPos.z) + 45
-        : state.terrain.supportHeight(camPos.x, camPos.z, pl.drillFeetY + 100) + 45;
+    let camGround = !excavating
+      ? terrainHeight(camPos.x, camPos.z) + 45
+      : state.terrain.supportHeight(camPos.x, camPos.z, pl.drillFeetY + 100) + 45;
     if (camPos.y < camGround) camPos.y = camGround;
     // Collision can compress the boom almost onto the high aiming pivot. If the
     // wizard's chest slips behind the view, push horizontally backward until it
@@ -4432,10 +4888,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       const pushBack = (minimumPlayerDepth - playerDepth) / Math.max(0.2, cp);
       camPos.x -= fwdX * pushBack;
       camPos.z -= fwdZ * pushBack;
-      camGround =
-        pl.drillFeetY == null
-          ? terrainHeight(camPos.x, camPos.z) + 45
-          : state.terrain.supportHeight(camPos.x, camPos.z, pl.drillFeetY + 100) + 45;
+      camGround = !excavating
+        ? terrainHeight(camPos.x, camPos.z) + 45
+        : state.terrain.supportHeight(camPos.x, camPos.z, pl.drillFeetY + 100) + 45;
       if (camPos.y < camGround) camPos.y = camGround;
       toPlayerX = pl.x - camPos.x;
       toPlayerY = chestY - camPos.y;
@@ -4443,16 +4898,23 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       playerDepth = toPlayerX * forwardX + toPlayerY * sp + toPlayerZ * forwardZ;
     }
     if (pl.drill) camPos.y += Math.sin(performance.now() * 0.075) * 1.4;
-    if (collapseShake > 0) {
-      const jitter = performance.now() * 0.09;
-      camPos.x += Math.sin(jitter) * collapseShake;
-      camPos.y += Math.cos(jitter * 1.3) * collapseShake * 0.5;
-    }
     camera.position.copy(camPos);
+    const shake = Math.min(10, impactShake + collapseShake);
+    // Offset only the rendered camera, keeping the spring arm and aim steady.
+    camera.position.x += Math.sin(impactClock * 77) * shake;
+    camera.position.z += Math.sin(impactClock * 63 + 0.7) * shake * 0.5;
+    camera.position.y = Math.max(
+      camGround,
+      camera.position.y + Math.cos(impactClock * 91) * shake * 0.6,
+    );
     sky.position.copy(camera.position);
     // Look in the true aim direction (yaw + pitch) so the center of the screen
     // matches where bolts fly — including up and down.
-    _look.set(camPos.x + forwardX * 600, camPos.y + sp * 600, camPos.z + forwardZ * 600);
+    _look.set(
+      camera.position.x + forwardX * 600,
+      camera.position.y + sp * 600,
+      camera.position.z + forwardZ * 600,
+    );
     camera.lookAt(_look);
     // Normally the requested FOV is untouched. At an extreme angle or beside a
     // wall, widen only enough to keep the chest inside a safe screen margin.
@@ -4484,14 +4946,14 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   // ---- Per-frame sync ------------------------------------------------------
-  function updateDigPreview(state, digPlayer, dt) {
+  function updateDigPreview(state, digPlayer) {
     for (const part of [digPreview, digTargetRing, digBeam, digBeamCore, digHandGlow, digFlow])
       part.visible = false;
     glCanvas.dataset.digTargetValid = 'false';
     glCanvas.dataset.digBeamVisible = 'false';
     glCanvas.dataset.digHitboxVisible = 'false';
     glCanvas.dataset.digFlowPhase = '0';
-    digBeamFlash = Math.max(0, digBeamFlash - dt * 2.5);
+    digBeamFlash = diggingPreviewEnabled && !!wizards.get(digPlayer?.id)?.diggingAction ? 1 : 0;
     latestDigAim = null;
     if (!diggingPreviewEnabled || !digPlayer?.alive || !digPlayer.digMode || digPlayer.drill)
       return;
@@ -4510,8 +4972,6 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     const radius = plan.brush?.radius || digPlayer.digRadius || MAGICAL_DRILL.precisionRadius;
     const length = plan.brush?.length || digPlayer.digLength || MAGICAL_DRILL.precisionLength;
     const valid = plan.accepted;
-    if (state.events.some((event) => event.type === 'dig' && event.wizardId === digPlayer.id))
-      digBeamFlash = 1;
 
     const rig = wizards.get(digPlayer.id);
     if (rig?.digHand) {
@@ -4557,6 +5017,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     digTargetRing.material.color.set(valid ? 0xff4949 : 0xffaaa0);
     digTargetRing.position.copy(digBeamEnd);
     digTargetRing.quaternion.setFromUnitVectors(digRingNormal, brushDirection);
+    // The translucent capsule is the exact brush; the small ring is an aim marker.
     // This ring marks the aim point. Its screen size stays readable when the
     // full-size cut volume is too close to the camera to outline cleanly.
     const markerRadius = Math.min(radius, Math.max(18, targetCameraDistance * 0.08));
@@ -4642,10 +5103,16 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   function update(state, dt, focusIndex = 0) {
+    const visualEvents = queuedVisualEvents;
+    queuedVisualEvents = [];
     syncTerrain(state.terrain);
     const digPlayer = state.wizards.find((w) => w.isPlayer && w.playerIndex === focusIndex);
     syncLevitation(state, digPlayer, dt);
     syncUndergroundFluids(state, digPlayer);
+    updateWaterEffects(visualEvents, dt);
+    glCanvas.dataset.swimming = String(!!digPlayer?.swimming);
+    glCanvas.dataset.inWater = String(!!digPlayer?.inWater);
+    updateImpactShake(visualEvents, dt, digPlayer);
     updateCamera(state, dt, focusIndex);
     const openingActive = state.opening?.phase && state.opening.phase !== 'complete';
     openingArena.visible = !!openingActive;
@@ -4682,6 +5149,10 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     }
     // Slow crossing wave patterns keep the ocean alive without moving the
     // shoreline or affecting gameplay physics.
+    if (riversideWaterDetail) {
+      riversideWaterDetail.offset.x += dt * 0.025;
+      riversideWaterDetail.offset.y += dt * 0.008;
+    }
     if (waterDetail) {
       waterDetail.offset.x = (waterDetail.offset.x + dt * 0.004) % 1;
       waterDetail.offset.y = (waterDetail.offset.y + dt * 0.0025) % 1;
@@ -4735,7 +5206,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       if (w.alive) {
         rig.digPose =
           (rig.digPose || 0) +
-          ((w.digMode && !w.drill ? 1 : 0) - (rig.digPose || 0)) * (1 - Math.exp(-18 * dt));
+          ((w.digMode && !w.drill ? 1 : 0) - (rig.digPose || 0)) * (1 - Math.exp(-28 * dt));
         // Render positions ease toward the fixed-step simulation positions.
         // Teleports still snap immediately, while normal walking fills the
         // otherwise visible gaps between 20 Hz physics ticks.
@@ -4768,6 +5239,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
           rig.drillSpin = (rig.drillSpin || 0) + dt * 10;
           if (w.drill) rig.body.rotation.y += rig.drillSpin;
         }
+        rig.waterHeight ||= {};
+        rig.group.position.y = waterVisualHeight(rig.waterHeight, w, rig.group.position.y, dt);
         updatePlayerWeaponPose(rig, w);
         if (rig.slowFallAura) {
           rig.slowFallAura.visible = !!w.slowFalling;
@@ -4819,8 +5292,10 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     );
     const pickupVisuals = useAttackPickups(availablePickups.length);
     const pickupTime = state.time + (state.opening?.elapsed || 0);
+    pickupVisualById.clear();
     availablePickups.forEach((pickup, index) => {
       const visual = pickupVisuals[index];
+      pickupVisualById.set(pickup.id, visual);
       const attack = ATTACKS[pickup.attackId];
       const isUpgradeRune = pickup.lootType === 'weapon-upgrade-rune';
       const isManaAmmunition = pickup.lootType === 'mana-ammunition';
@@ -4862,7 +5337,11 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       data.ring.material.opacity = data.model ? 0.3 : 0.72;
       data.tierRing.visible = !data.model && (isUpgradeRune || isTierScroll);
     });
+    updatePickupFlights(state, dt);
 
+    glCanvas.dataset.spellTrails = String(
+      state.spells.filter((b) => b.kind !== 'trap' && b.kind !== 'zone').length,
+    );
     const bolts = useSpells(state.spells.length);
     state.spells.forEach((b, i) => {
       const m = bolts[i];
@@ -4885,6 +5364,26 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         const trail = b.trail || Math.max(18, Math.min(76, sp / 65));
         m.scale.set(b.radius * 0.55, trail, b.radius * 0.55);
       }
+      const trace = m.userData.trace;
+      const positions = trace.geometry.attributes.position;
+      const changed = m.userData.traceId !== b;
+      const jumped =
+        Math.hypot(
+          positions.getX(0) - m.position.x,
+          positions.getY(0) - m.position.y,
+          positions.getZ(0) - m.position.z,
+        ) > 600;
+      if (changed || jumped) {
+        for (let j = 0; j < 8; j++) positions.setXYZ(j, m.position.x, m.position.y, m.position.z);
+        m.userData.traceId = b;
+      } else if (dt > 0) {
+        for (let j = 7; j > 0; j--)
+          positions.setXYZ(j, positions.getX(j - 1), positions.getY(j - 1), positions.getZ(j - 1));
+        positions.setXYZ(0, m.position.x, m.position.y, m.position.z);
+      }
+      positions.needsUpdate = true;
+      trace.material.color.set(b.color).multiplyScalar(1.8);
+      trace.visible = b.kind !== 'trap' && b.kind !== 'zone';
       m.userData.core.material.color.set(b.color).multiplyScalar(2.4);
       m.userData.glow.material.color.set(b.color).multiplyScalar(1.45);
     });
@@ -4901,7 +5400,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       const fz = Math.sin(w.heading);
       m.position.set(
         w.x + fx * 22,
-        46 + terrainHeight(w.x, w.y) + (w.climbH || 0) + (w.flyH || 0) + (w.jumpH || 0),
+        46 + wizardGround(w) + (w.climbH || 0) + (w.flyH || 0) + (w.jumpH || 0),
         w.y + fz * 22,
       ); // chest height
       m.scale.setScalar(52);
@@ -4911,9 +5410,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       m.material.color.set(ATTACKS[w.attack]?.color || SPELLS.slash.color);
       m.material.opacity = 0.6 * (w.slashTimer / sdur);
     });
-    updateImpactSparks(state.events, dt);
-    updateFallingRoofs(state.events, dt, digPlayer);
-    updateAttackEffects(state.events, dt);
+    updateImpactSparks(visualEvents, dt);
+    updateFallingRoofs(visualEvents, dt, digPlayer);
+    updateAttackEffects(visualEvents, dt);
   }
 
   // The countdown only needs a responsive camera. Avoid synchronizing every
@@ -5065,7 +5564,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
 
     for (const w of state?.wizards || []) {
       if (!w.alive || w === player) continue;
-      const base = terrainHeight(w.x, w.y) + (w.climbH || 0) + (w.flyH || 0) + (w.jumpH || 0);
+      const base = wizardGround(w) + (w.climbH || 0) + (w.flyH || 0) + (w.jumpH || 0);
       const hit = rayCylinderDistance(
         w.x,
         w.y,
@@ -5123,7 +5622,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     return worldToScreen(
       wizard.x,
       wizard.y,
-      terrainHeight(wizard.x, wizard.y) +
+      wizardGround(wizard) +
         (wizard.climbH || 0) +
         (wizard.flyH || 0) +
         (wizard.jumpH || 0) +
@@ -5151,14 +5650,36 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     camera.updateProjectionMatrix();
   }
 
+  let sampleOverview = false;
   function render() {
+    if (sampleOverview) {
+      camera.position.set(STYLE_SAMPLE.x - 1600, 1800, STYLE_SAMPLE.z + 1200);
+      camera.lookAt(STYLE_SAMPLE.x, 60, STYLE_SAMPLE.z);
+    }
     renderer.render(scene, camera);
+    glCanvas.dataset.drawCalls = String(renderer.info.render.calls);
+    glCanvas.dataset.renderTriangles = String(renderer.info.render.triangles);
   }
 
   function dispose(releaseContext = true) {
+    dirtGlowTexture.dispose();
+    for (const material of dirtGlowMaterials) material.dispose();
+    digMagicMat.dispose();
+    digGoldMat.dispose();
+    for (const flight of pickupFlights) {
+      scene.remove(flight.visual);
+      flight.core.material.dispose();
+    }
     for (const geometry of digPreviewGeometries.values()) geometry.dispose();
     digFlowGeometry.dispose();
     digFlow.material.dispose();
+    riversideWaterDetail?.dispose();
+    impactRingGeometry.dispose();
+    for (const ring of impactRings) ring.mesh.material.dispose();
+    for (const spell of spellPool) {
+      spell.userData.trace.geometry.dispose();
+      spell.userData.trace.material.dispose();
+    }
     renderer.dispose();
     if (releaseContext) renderer.forceContextLoss();
   }
@@ -5167,6 +5688,29 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   // If it resolves after the match begins, attaching its rig and compiling its
   // materials can block the first animation frames and make "3" appear stuck.
   async function prepareMatch(state, focusIndex = 0) {
+    queuedVisualEvents = [];
+    receivedVisualEvents = new WeakSet();
+    impactShake = collapseShake = 0;
+    impactClock = dirtBursts = 0;
+    glCanvas.dataset.dirtBursts = '0';
+    for (const spark of sparkPool) {
+      spark.active = false;
+      spark.mesh.visible = false;
+    }
+    pickupFlightEvents = new WeakSet();
+    pickupVisualById.clear();
+    pickupFlightsStarted = pickupFlightsCompleted = 0;
+    for (const ripple of waterRipplePool) {
+      ripple.life = 0;
+      ripple.mesh.visible = false;
+    }
+    glCanvas.dataset.pickupFlightsStarted = '0';
+    glCanvas.dataset.pickupFlightsCompleted = '0';
+    glCanvas.dataset.pickupCompletedHandDistance = '';
+    for (const flight of pickupFlights) {
+      flight.active = false;
+      flight.visual.visible = false;
+    }
     // A damaged cache or interrupted local model request must never leave the
     // game on "Preparing the Island" forever. Fall back to the built-in wizard
     // after six seconds; a healthy local GLB normally resolves much sooner.
@@ -5184,10 +5728,13 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     // spends the first playable frames easing out of the old match even when
     // the mouse is completely still.
     camReady = false;
+    waterCamera.height = null;
     update(state, 0, focusIndex);
   }
 
   return {
+    queueMatchEvent,
+    animatePickup,
     prepareMatch,
     update,
     updateOpeningCamera,
@@ -5195,6 +5742,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
     resize,
     setAim,
     setFov,
+    setSampleOverview(enabled) {
+      sampleOverview = !!enabled;
+    },
     setAdsAmount,
     setDiggingMode(enabled) {
       diggingPreviewEnabled = !!enabled;
