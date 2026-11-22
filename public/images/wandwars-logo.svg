@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -35 720 175" role="img" aria-labelledby="name">
+  <title id="name">WandWars</title>
+  <defs>
+    <linearGradient id="fire" x1="0" y1="1" x2="0" y2="0">
+      <stop stop-color="#ffe18b"/><stop offset=".45" stop-color="#ff8a24"/><stop offset="1" stop-color="#c83215"/>
+    </linearGradient>
+    <filter id="element-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2"/>
+    </filter>
+    <path id="lightning-left" d="M103 4 L133-22 L128-5 L164-17 L149 7 L178 0"/>
+    <path id="lightning-right" d="M602-19 L579 8 L601 3 L574 32 L588 29 L567 51"/>
+    <path id="flame" d="M0 0 C-14-7 -12-19 -6-28 C-8-17 -2-17 -1-23 C4-31 0-40 7-49 C5-30 21-23 13-9 C19-15 19-20 18-23 C30-8 18 3 0 0 Z"/>
+  
+    <linearGradient id="wood-tone" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#deb784"/>
+      <stop offset=".26" stop-color="#bf905a"/>
+      <stop offset=".55" stop-color="#a67543"/>
+      <stop offset=".8" stop-color="#b88750"/>
+      <stop offset="1" stop-color="#85562f"/>
+    </linearGradient>
+    <pattern id="wood-grain" width="240" height="38" patternUnits="userSpaceOnUse">
+      <path d="M-10 10 C55 3 110 20 170 11 S220 7 250 10 M-10 30 C60 23 110 36 180 28 S225 25 250 29" fill="none" stroke="#54331e" stroke-width=".65" opacity=".22"/>
+      <path d="M-10 11 C55 4 110 21 170 12 S220 8 250 11" fill="none" stroke="#f6d8aa" stroke-width=".6" opacity=".2"/>
+    </pattern>
+    <path id="wood-w" d="M1 21 H27 V25 L21 27 L35 75 L49 21 H63 L80 79 L78 94 H68 L55 52 L43 94 H29 L9 28 L1 25 Z"/>
+    <text id="wood-letters" x="110" y="94" font-family="Georgia, 'Times New Roman', serif" font-size="100" font-weight="700" letter-spacing="0">ANDWARS</text>
+    <g id="wood-face">
+      <use href="#wood-w"/>
+      <use href="#wood-letters"/>
+    </g>
+    <linearGradient id="magic" x1="105" y1="5" x2="272" y2="-12" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60358c"/><stop offset=".55" stop-color="#8753b2"/><stop offset="1" stop-color="#8753b2" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="trail-glow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="2.3"/>
+    </filter>
+    <path id="trail" d="M105 5 C124-19 169-28 209-22 S252-9 272-12"/>
+    <path id="sparkle" d="M0-5 L1.2-1.2 L5 0 L1.2 1.2 L0 5 L-1.2 1.2 L-5 0 L-1.2-1.2 Z"/>
+  </defs>
+  <use href="#trail" fill="none" stroke="url(#magic)" stroke-width="6" opacity="0.55" filter="url(#trail-glow)"/>
+  <use href="#trail" fill="none" stroke="url(#magic)" stroke-width="1.8" stroke-linecap="round"/>
+  <g fill="#78459f">
+    <use href="#sparkle" transform="translate(108 2) scale(.8)"/>
+    <use href="#sparkle" transform="translate(160 -22) scale(.6)"/>
+    <use href="#sparkle" transform="translate(220 -17) scale(.4)" opacity=".7"/>
+  </g>
+  <!-- Elemental bursts sit behind the carved lettering. -->
+  <g fill="none" stroke-linejoin="miter">
+    <g stroke="#347be5" stroke-width="6" opacity=".65" filter="url(#element-glow)">
+      <use href="#lightning-left"/><use href="#lightning-right"/>
+    </g>
+    <g stroke="#7ad9ff" stroke-width="2.8">
+      <use href="#lightning-left"/><use href="#lightning-right"/>
+    </g>
+    <g stroke="#e4f7ff" stroke-width=".8">
+      <use href="#lightning-left"/><use href="#lightning-right"/>
+    </g>
+    <path d="M137-8 L145 5 L157 11 M590 16 L613 21 L605 34" stroke="#75c8ff" stroke-width="1.2"/>
+  </g>
+  <g fill="url(#fire)">
+    <use href="#flame" transform="translate(255 28) rotate(-12) scale(.85)"/>
+    <use href="#flame" transform="translate(278 31) rotate(16) scale(.55)"/>
+    <use href="#flame" transform="translate(487 32) rotate(9) scale(1.05)"/>
+    <use href="#flame" transform="translate(514 32) rotate(20) scale(.6)"/>
+    <use href="#flame" transform="translate(659 37) rotate(21) scale(.85)"/>
+  </g>
+  <g fill="#fff0ae">
+    <path d="M253 25 Q244 18 258 1 Q253 17 263 21 L261 28 Z"/>
+    <path d="M486 27 Q477 17 492-3 Q486 15 497 25 Z"/>
+  </g>
+  <g fill="#ffae43">
+    <circle cx="251" cy="-24" r="1.6"/><circle cx="272" cy="-13" r="1"/>
+    <circle cx="488" cy="-29" r="1.6"/><circle cx="506" cy="-20" r="1.2"/>
+    <circle cx="675" cy="-9" r="1.7"/><circle cx="648" cy="-19" r="1"/>
+    <path d="M291-9 l2-6 1 4 -2 5 Z M522-3 l2-7 1 5 -2 4 Z"/>
+  </g>
+  <!-- Three brown strokes form the first W. Its fourth stroke is the wand. -->
+  <use href="#wood-face" transform="translate(0 4)" fill="#38251b" stroke="#38251b" stroke-width="2.5" stroke-linejoin="round"/>
+  <use href="#wood-face" transform="translate(0 -1)" fill="#e6c89c" stroke="#e6c89c" stroke-width="1.5" stroke-linejoin="round"/>
+  <use href="#wood-face" fill="url(#wood-tone)" stroke="#503322" stroke-width=".7"/>
+  <use href="#wood-face" fill="url(#wood-grain)"/>
+  <g transform="translate(78 88) rotate(18)">
+    <!-- Carved wood, rune bands, and a crystal held by wooden prongs. -->
+    <path d="M-6 4 L-5-9 L-3-42 L-6-50 L-4-59 L-8-67 L-7-75 L-3-78 L-4-67 L0-63 L4-68 L4-78 L8-72 L7-63 L4-57 L6-50 L3-43 L5-9 L6 4 Z" fill="#8c4318" stroke="#633012" stroke-width="1"/>
+    <path d="M-4 1 L-2-31 L0-44 L-3-51 L1-57 L4-63 L0-59 L-5-54 L-1-46 L-4-35 Z" fill="#c7762c"/>
+    <path d="M0 1 L2-32 L1-44 L5-50 L2-54 L0-49 L2-44 Z" fill="#b35b21"/>
+    <path d="M-7 0 H7 V5 H-7 Z M-5-21 H5 V-16 H-5 Z M-6-58 H6 V-52 H-6 Z" fill="#e6b74c" stroke="#986322" stroke-width="0.8"/>
+    <path d="M-7 1 H7 M-5-20 H5 M-6-57 H6" stroke="#ffe38a" stroke-width="1"/>
+    <path d="M-2-19 L1-19 L-1-17 L2-17 M-3-56 L-1-54 L1-56 L3-54" fill="none" stroke="#80501c" stroke-width="0.8"/>
+    <path d="M0-87 L5-78 L4-69 L0-64 L-4-69 L-5-78 Z" fill="#21d2e4" stroke="#adfaff" stroke-width="0.8"/>
+    <path d="M0-87 L0-76 L-5-78 Z" fill="#b4ffff"/>
+    <path d="M0-76 L5-78 L4-69 L0-64 Z" fill="#03aabc"/>
+    <path d="M-5-78 L0-76 L5-78 M0-76 L-4-69 L0-64 L4-69 Z" fill="none" stroke="#a9ffff" stroke-width="0.6"/>
+    <path d="M-4 6 L0 9 L4 6 Z" fill="#25a7b6" stroke="#75401f" stroke-width="0.7"/>
+  </g>
+</svg>

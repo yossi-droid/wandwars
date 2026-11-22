@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WandWars</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <!-- Start menu -->
+      <section id="menu" aria-label="WandWars home screen">
+        <h1 id="title" aria-label="WandWars">
+          <img class="wandwars-logo" src="/images/wandwars-logo.svg" alt="WandWars" />
+        </h1>
+        <div class="menu-ui">
+          <div class="menu-block">
+            <h2>Wizards in the match</h2>
+            <div class="picker" id="bots-picker">
+              <button data-bots="0" type="button">Solo</button>
+              <button data-bots="5" type="button">6</button>
+              <button data-bots="9" type="button" aria-pressed="true">10</button>
+              <button data-bots="14" type="button">15</button>
+              <button data-bots="19" type="button">20</button>
+            </div>
+          </div>
+          <button id="play" class="play" type="button">▶ Play</button>
+          <button id="settings-button" class="menu-secondary-button" type="button">
+            ⚙ Settings
+          </button>
+        </div>
+      </section>
+
+      <section id="settings" aria-label="Game settings" hidden>
+        <div class="settings-panel">
+          <header class="settings-header">
+            <p class="weapon-eyebrow">WandWars preferences</p>
+            <h2>Settings</h2>
+            <p>Your choices are saved on this device.</p>
+          </header>
+          <div class="settings-grid">
+            <label class="setting-row">
+              <span
+                ><strong>Graphics quality</strong
+                ><small>Detailed 3D uses the full island; Safe uses lighter graphics.</small></span
+              >
+              <select id="setting-graphics">
+                <option value="detailed">Detailed</option>
+                <option value="safe">Safe</option>
+              </select>
+            </label>
+            <label class="setting-row">
+              <span
+                ><strong>Mouse sensitivity</strong
+                ><small>Adjust camera movement speed.</small></span
+              >
+              <output id="setting-sensitivity-value">100%</output>
+              <input
+                id="setting-sensitivity"
+                type="range"
+                min="25"
+                max="200"
+                step="5"
+                value="100"
+              />
+            </label>
+            <label class="setting-row">
+              <span><strong>Master volume</strong><small>Overall game volume.</small></span>
+              <output id="setting-master-value">80%</output>
+              <input id="setting-master" type="range" min="0" max="100" step="5" value="80" />
+            </label>
+            <label class="setting-row">
+              <span><strong>Music volume</strong><small>Menu and match music.</small></span>
+              <output id="setting-music-value">70%</output>
+              <input id="setting-music" type="range" min="0" max="100" step="5" value="70" />
+            </label>
+            <label class="setting-row">
+              <span
+                ><strong>Effects volume</strong
+                ><small>Spells, footsteps, and interface sounds.</small></span
+              >
+              <output id="setting-effects-value">85%</output>
+              <input id="setting-effects" type="range" min="0" max="100" step="5" value="85" />
+            </label>
+            <label class="setting-check"
+              ><input id="setting-invert-y" type="checkbox" /><span
+                ><strong>Invert vertical look</strong
+                ><small>Reverse up and down mouse movement.</small></span
+              ></label
+            >
+            <label class="setting-check"
+              ><input id="setting-reduced-motion" type="checkbox" /><span
+                ><strong>Reduce motion</strong
+                ><small>Reduce menu glow and transition effects.</small></span
+              ></label
+            >
+            <label class="setting-row">
+              <span
+                ><strong>Dig button</strong
+                ><small>Choose whether one press toggles digging or you hold the key.</small></span
+              >
+              <select id="setting-dig-control">
+                <option value="toggle">Press to toggle</option>
+                <option value="hold">Hold to dig</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-controls">
+            <h3>Controls</h3>
+            <p class="settings-controls-help">
+              Click a key to change it. Changes are saved automatically.
+            </p>
+            <div id="keybinds" class="keybinds" aria-label="Key bindings"></div>
+            <button id="reset-keybinds" class="settings-action" type="button">
+              Reset Controls
+            </button>
+          </div>
+          <div class="settings-actions">
+            <button id="fullscreen-button" class="settings-action" type="button">
+              ⛶ Fullscreen</button
+            ><button id="settings-back" class="settings-action primary" type="button">Done</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Required before every match: choose one permanent casting focus. -->
+      <section id="weapon-select" aria-label="Choose a base weapon" hidden>
+        <div class="weapon-select-panel">
+          <header class="weapon-select-header">
+            <p class="weapon-eyebrow">Before the portals open</p>
+            <h2>Choose Your Base Weapon</h2>
+            <p>
+              Your weapon stays locked for this match. It starts with no attacks—find them on the
+              island.
+            </p>
+          </header>
+
+          <div id="weapon-grid" class="weapon-grid" role="listbox" aria-label="Base weapons">
+            <button class="weapon-card" data-weapon="apprentice-wand" role="option" type="button">
+              <img src="/images/weapons/apprentice-wand.png" alt="Apprentice Wand" />
+              <span class="weapon-card-copy">
+                <strong>Apprentice Wand</strong>
+                <small>A balanced, nimble focus that feels natural with every kind of magic.</small>
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+            <button
+              class="weapon-card"
+              data-weapon="focusing-crystal-staff"
+              role="option"
+              type="button"
+            >
+              <img src="/images/weapons/focusing-crystal-staff.png" alt="Focusing Crystal Staff" />
+              <span class="weapon-card-copy">
+                <strong>Focusing Crystal Staff</strong>
+                <small>A precise two-handed focus made for patient, accurate casting.</small>
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+            <button
+              class="weapon-card"
+              data-weapon="thunderclap-gauntlet"
+              role="option"
+              type="button"
+            >
+              <img src="/images/weapons/thunderclap-gauntlet.png" alt="Thunderclap Gauntlet" />
+              <span class="weapon-card-copy">
+                <strong>Thunderclap Gauntlet</strong>
+                <small>A close-range conduit that channels magic through the caster’s fist.</small>
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="weapon-card" data-weapon="arcane-spellbook" role="option" type="button">
+              <img src="/images/weapons/arcane-spellbook.png" alt="Arcane Spellbook" />
+              <span class="weapon-card-copy">
+                <strong>Arcane Spellbook</strong>
+                <small
+                  >A scholarly focus for runes, wards, and carefully controlled spellwork.</small
+                >
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="weapon-card" data-weapon="enchanted-bow" role="option" type="button">
+              <img src="/images/weapons/enchanted-bow.png" alt="Enchanted Bow" />
+              <span class="weapon-card-copy">
+                <strong>Enchanted Bow</strong>
+                <small
+                  >A graceful ranged focus that shapes found attacks into magical arrows.</small
+                >
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="weapon-card" data-weapon="chaos-orb" role="option" type="button">
+              <img src="/images/weapons/chaos-orb.png" alt="Chaos Orb" />
+              <span class="weapon-card-copy">
+                <strong>Chaos Orb</strong>
+                <small>An unstable floating focus that crackles with unpredictable power.</small>
+              </span>
+              <span class="weapon-check" aria-hidden="true">✓</span>
+            </button>
+          </div>
+
+          <div class="weapon-select-actions">
+            <button id="weapon-back" class="weapon-back" type="button">Back</button>
+            <button id="confirm-weapon" class="confirm-weapon" type="button" hidden disabled>
+              Confirm Weapon
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Game screen -->
+      <section id="game-screen" hidden>
+        <div id="stage">
+          <canvas id="game" aria-label="WandWars 3D arena" tabindex="0"></canvas>
+          <canvas id="hud" width="1024" height="576"></canvas>
+          <div id="start-loading" role="status" aria-live="polite" hidden>
+            <span class="loading-rune" aria-hidden="true">✦</span>
+            <strong>Preparing the Island…</strong>
+            <small>Building the detailed world. The portals will open when it is ready.</small>
+          </div>
+        </div>
+        <div class="game-bar">
+          <button id="back" type="button">⬅ Menu</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
