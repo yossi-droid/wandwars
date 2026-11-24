@@ -27,6 +27,12 @@ describe('item visuals without downloaded assets', () => {
       const size = new THREE.Box3().setFromObject(item).getSize(new THREE.Vector3());
       expect(Math.max(size.x, size.y, size.z)).toBeCloseTo(32, 4);
       expect(item.children.length).toBeGreaterThan(2);
+      expect(item.children.length).toBeLessThanOrEqual(10);
+      const triangles = item.children.reduce(
+        (sum, part) => sum + part.geometry.attributes.position.count / 3,
+        0,
+      );
+      expect(triangles).toBeLessThan(18000);
       item.traverse((part) => {
         expect(['SphereGeometry', 'IcosahedronGeometry', 'TorusGeometry']).not.toContain(
           part.geometry?.type,
@@ -45,13 +51,15 @@ describe('item visuals without downloaded assets', () => {
     expect(first.children[0].geometry).toBe(second.children[0].geometry);
   });
 
-  it('preserves detailed assets except for the old planetary mana models', () => {
+  it('uses ornate built-ins for current items and allows future custom assets', () => {
     const detailed = new THREE.Group();
     const assets = new Map([
       ['fairy_fizz', detailed],
       ['cosmic_orbs', detailed],
+      ['custom_item', detailed],
     ]);
-    expect(pickupVisualTemplate('fairy_fizz', assets)).toBe(detailed);
+    expect(pickupVisualTemplate('custom_item', assets)).toBe(detailed);
+    expect(pickupVisualTemplate('fairy_fizz', assets)).not.toBe(detailed);
     expect(pickupVisualTemplate('cosmic_orbs', assets)).not.toBe(detailed);
   });
 });

@@ -39,7 +39,7 @@ import { advanceSwimPose, swimStroke, usesTunnelCamera, waterVisualHeight } from
 import { adsProfileForWeapon } from './ads.js';
 import { terrainChunkAt, terrainChunkKey } from './terrain.js';
 import { impactShakeStrength } from './impactFeedback.js';
-import { pickupVisualTemplate } from './pickupVisuals.js';
+import { pickupVisualTemplate, usesBuiltinPickupVisual } from './pickupVisuals.js';
 
 export const HUD_W = 1024;
 export const HUD_H = 576;
@@ -98,6 +98,7 @@ const itemModels = new Map();
 const itemLoader = new GLTFLoader();
 if (!safariCompatibilityAssets) {
   for (const name of itemModelNames) {
+    if (usesBuiltinPickupVisual(name)) continue;
     itemLoader.load(
       `/models/items/${name}.glb`,
       ({ scene: model }) => {
