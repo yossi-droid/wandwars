@@ -39,6 +39,7 @@ import { advanceSwimPose, swimStroke, usesTunnelCamera, waterVisualHeight } from
 import { adsProfileForWeapon } from './ads.js';
 import { terrainChunkAt, terrainChunkKey } from './terrain.js';
 import { impactShakeStrength } from './impactFeedback.js';
+import { pickupVisualTemplate } from './pickupVisuals.js';
 
 export const HUD_W = 1024;
 export const HUD_H = 576;
@@ -4460,11 +4461,11 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
   }
 
   // ---- Collectible loot ----------------------------------------------------
-  // Detailed item models replace the crystals once loaded. A ground ring
-  // retains the rarity cue; crystals remain only as an asset-load fallback.
+  // Every pickup has an item-shaped visual immediately, including Safari.
+  // Detailed loaded assets can replace the lightweight built-in shapes.
   const attackPickupPool = [];
   const pickupCoreGeometry = new THREE.OctahedronGeometry(12, 1);
-  const pickupRingGeometry = new THREE.TorusGeometry(19, 1.6, 7, 28);
+  const pickupRingGeometry = new THREE.RingGeometry(15, 18, 28);
   function useAttackPickups(n) {
     while (attackPickupPool.length < n) {
       const group = new THREE.Group();
@@ -4483,7 +4484,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
           toneMapped: false,
         }),
       );
-      ring.rotation.x = Math.PI / 2;
+      ring.rotation.x = -Math.PI / 2;
       const tierRing = ring.clone();
       tierRing.material = ring.material.clone();
       tierRing.rotation.set(Math.PI / 2, Math.PI / 2, 0);
@@ -4549,8 +4550,8 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       flight.model = null;
       flight.modelName = modelName;
     }
-    if (!flight.model && itemModels.has(modelName)) {
-      flight.model = itemModels.get(modelName).clone(true);
+    if (!flight.model) {
+      flight.model = pickupVisualTemplate(modelName, itemModels).clone(true);
       flight.visual.add(flight.model);
     }
     flight.core.visible = !flight.model;
@@ -5308,7 +5309,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
           : attack?.color || '#67e8f9';
       visual.position.set(
         pickup.x,
-        terrainHeight(pickup.x, pickup.y) + 34 + Math.sin(pickupTime * 2.2 + index) * 7,
+        terrainHeight(pickup.x, pickup.y) + 24 + Math.sin(pickupTime * 2.2 + index) * 2.5,
         pickup.y,
       );
       visual.rotation.y +=
@@ -5320,7 +5321,7 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
       visual.userData.ring.material.color.set(rarityColor).multiplyScalar(1.3);
       visual.userData.tierRing.material.color.set(attackColor).multiplyScalar(1.3);
       const modelName = pickupModelName(pickup);
-      const template = itemModels.get(modelName);
+      const template = pickupVisualTemplate(modelName, itemModels);
       const data = visual.userData;
       if (data.modelName !== modelName) {
         if (data.model) visual.remove(data.model);
@@ -5333,9 +5334,9 @@ export function createRenderer(glCanvas, { safeMode = false } = {}) {
         visual.add(data.model);
       }
       data.core.visible = !data.model;
-      data.ring.position.y = data.model ? -23 : 0;
-      data.ring.material.opacity = data.model ? 0.3 : 0.72;
-      data.tierRing.visible = !data.model && (isUpgradeRune || isTierScroll);
+      data.ring.position.y = -22 - Math.sin(pickupTime * 2.2 + index) * 2.5;
+      data.ring.material.opacity = 0.22;
+      data.tierRing.visible = false;
     });
     updatePickupFlights(state, dt);
 
