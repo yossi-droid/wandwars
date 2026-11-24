@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { makePickupMaterial } from './pickupMaterials.js';
 
 const templates = new Map();
 const materials = new Map();
@@ -22,23 +23,9 @@ const colors = {
 };
 
 function material(key) {
-  const [finish, tint] = key.includes(':') ? key.split(':') : ['', key];
+  const tint = key.includes(':') ? key.split(':')[1] : key;
   const color = colors[tint] || colors.violet;
-  if (!materials.has(key))
-    materials.set(
-      key,
-      new THREE.MeshStandardMaterial({
-        color,
-        roughness:
-          finish === 'glass' ? 0.16 : finish === 'gem' ? 0.25 : key === 'gold' ? 0.34 : 0.63,
-        metalness: key === 'gold' || key === 'silver' ? 0.65 : 0.04,
-        transparent: finish === 'glass',
-        opacity: finish === 'glass' ? 0.38 : 1,
-        depthWrite: finish !== 'glass',
-        emissive: finish === 'glow' || finish === 'gem' ? color : 0,
-        emissiveIntensity: finish === 'glow' ? 0.3 : 0.07,
-      }),
-    );
+  if (!materials.has(key)) materials.set(key, makePickupMaterial(key, color));
   return materials.get(key);
 }
 
@@ -127,8 +114,8 @@ function build(name) {
       `glass:${color}`,
       [0, 0, 0],
     );
-    cylinder(color, 0.365, 0.61, [0, -0.3, 0]);
-    cylinder(`gem:${color}`, 0.365, 0.035, [0, 0.015, 0]);
+    cylinder(`liquid:${color}`, 0.365, 0.61, [0, -0.3, 0]);
+    cylinder(`liquid:${color}`, 0.365, 0.035, [0, 0.015, 0]);
     cylinder('cork', 0.15, 0.22, [0, 0.76, 0]);
     cylinder('leather', 0.153, 0.028, [0, 0.76, 0]);
     cylinder('cork', 0.135, 0.025, [0, 0.88, 0]);
@@ -146,10 +133,6 @@ function build(name) {
     if (name === 'great_protection_potion') {
       for (const x of [-0.44, 0.44]) box('gold', [0.07, 0.5, 0.35], [x, -0.1, 0]);
       badge('silver', [0, -0.1, 0.51], 0.4);
-    }
-    for (const x of [-0.11, 0.12]) {
-      const highlight = cylinder('cream', 0.012, 0.21, [x, 0.22, 0.3]);
-      highlight.rotation.z = -0.25;
     }
   } else if (name.includes('scroll')) {
     const ribbon = name === 'tier_ii_attack_scroll' ? 'blue' : 'red';

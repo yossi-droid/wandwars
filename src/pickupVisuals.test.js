@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { pickupVisualTemplate } from './pickupVisuals.js';
+import { makePickupMaterial } from './pickupMaterials.js';
 
 describe('item visuals without downloaded assets', () => {
+  it('uses shared textured surfaces and physical glass without a costly transmission pass', () => {
+    const paper = makePickupMaterial('paper', 0xead6a0);
+    const second = makePickupMaterial('cream', 0xffefcf);
+    const glass = makePickupMaterial('glass:blue', 0x3c91e6);
+    const gold = makePickupMaterial('gold', 0xd7a346);
+    expect(paper.map).toBe(second.map);
+    expect(paper.bumpMap).toBeTruthy();
+    expect(paper.roughnessMap).toBeTruthy();
+    expect(glass.isMeshPhysicalMaterial).toBe(true);
+    expect(glass.transparent).toBe(true);
+    expect(glass.transmission).toBe(0);
+    expect(glass.envMap).toBe(gold.envMap);
+    expect(gold.metalness).toBeGreaterThan(0.8);
+  });
   it('shows readable item silhouettes with no spheres or orbital rings', () => {
     for (const name of [
       'fairy_fizz',
